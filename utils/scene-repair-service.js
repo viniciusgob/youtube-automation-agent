@@ -159,6 +159,14 @@ class SceneRepairService {
     }
     const directory = path.join(this.dataRoot, 'audio', 'scenes', production.id);
     await fs.mkdir(directory, { recursive: true });
+    // Scene durations are estimated from word counts; fit them to the real narration length so
+    // no segment is cut past the end of the audio (which yields empty, undecodable MP3s).
+    const estimatedTotal = scenes.reduce((sum, scene) => sum + Number(scene.duration || 0), 0);
+    const actualTotal = await Promise.resolve(this.getMediaDuration(audioPath)).catch(() => null);
+    if (Number.isFinite(actualTotal) && actualTotal > 0 && estimatedTotal > 0 && Math.abs(actualTotal - estimatedTotal) > 0.5) {
+      const factor = actualTotal / estimatedTotal;
+      for (const scene of scenes) scene.duration = Math.max(0.5, Math.round(Number(scene.duration) * factor * 100) / 100);
+    }
     let start = 0;
     for (const scene of scenes) {
       const output = path.join(directory, `${String(scene.position).padStart(3, '0')}_r1.mp3`);

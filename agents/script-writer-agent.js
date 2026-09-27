@@ -1,5 +1,6 @@
 const { Logger } = require('../utils/logger');
 const { AITextService } = require('../utils/ai-text-service');
+const { isEnglish } = require('../utils/content-language');
 
 class ScriptWriterAgent {
   constructor(db, credentials) {
@@ -173,6 +174,9 @@ Avoid fabricated statistics, unsupported claims, and fake urgency. List every ex
         }
       };
     } catch (error) {
+      // The built-in templates are English-only; for other channel languages fail the stage
+      // (it can be resumed) instead of producing English filler content.
+      if (!isEnglish()) throw error;
       this.logger.warn(`AI script generation failed; using template fallback: ${error.message}`);
       return null;
     }

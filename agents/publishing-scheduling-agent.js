@@ -182,6 +182,7 @@ class PublishingSchedulingAgent {
       scheduleEntry.publishedAt = new Date().toISOString();
       scheduleEntry.youtubeId = uploadResult.id;
       scheduleEntry.youtubeUrl = `https://www.youtube.com/watch?v=${uploadResult.id}`;
+      scheduleEntry.warnings = uploadResult.warnings || [];
       
       await this.db.updateScheduleEntry(scheduleEntry);
       await this.syncShortStatus(scheduleEntry, 'published');
@@ -245,17 +246,19 @@ class PublishingSchedulingAgent {
     scheduleEntry.error = null;
     await this.db.updateScheduleEntry(scheduleEntry);
     
-    // Upload thumbnail
-    if (metadata.thumbnail && metadata.thumbnail.path) {
-      await this.uploadThumbnail(videoId, metadata.thumbnail.path);
+    // Thumbnail and captions are best-effort: the video is already live, so report failures as warnings.
+    const warnings = [];
+    if (metadata.thumbnail && (metadata.thumbnail.path || metadata.thumbnail.originalPath)) {
+      const warning = await this.uploadThumbnail(videoId, metadata.thumbnail.path, metadata.thumbnail.originalPath);
+      if (warning) warnings.push(warning);
     }
     
-    // Upload captions
     if (metadata.captions && metadata.captions.path) {
-      await this.uploadCaptions(videoId, metadata.captions.path);
+      const warning = await this.uploadCaptions(videoId, metadata.captions.path);
+      if (warning) warnings.push(warning);
     }
     
-    return videoUpload.data;
+    return { ...videoUpload.data, warnings };
   }
 
   async isNarrationReady(audio = {}) {
@@ -323,9 +326,22 @@ class PublishingSchedulingAgent {
       throw new Error('video file not found — refusing to upload placeholder');
     }
   }
-  async uploadThumbnail(videoId, thumbnailPath) {
+  // Returns null on success or a warning message. Placeholder files (.info) are skipped in favour of
+  // the original designer image, since YouTube rejects them as "invalid image content".
+  async uploadThumbnail(videoId, thumbnailPath, fallbackPath = null) {
+    const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+    let usablePath = null;
+    for (const candidate of [thumbnailPath, fallbackPath]) {
+      if (!candidate || !imageExtensions.has(path.extname(candidate).toLowerCase())) continue;
+      if (await fs.stat(candidate).then(stats => stats.isFile() && stats.size > 0).catch(() => false)) { usablePath = candidate; break; }
+    }
+    if (!usablePath) {
+      const message = 'Thumbnail not uploaded: no real thumbnail image was generated, so YouTube is using an automatic frame';
+      this.logger.warn(message);
+      return message;
+    }
     try {
-      const thumbnailBuffer = await fs.readFile(thumbnailPath);
+      const thumbnailBuffer = await fs.readFile(usablePath);
       
       await this.youtube.thumbnails.set({
         videoId: videoId,
@@ -335,8 +351,10 @@ class PublishingSchedulingAgent {
       });
       
       this.logger.info(`Thumbnail uploaded for video: ${videoId}`);
+      return null;
     } catch (error) {
       this.logger.error(`Failed to upload thumbnail: ${error.message}`);
+      return `Thumbnail not uploaded: ${error.message}`;
     }
   }
 
@@ -411,8 +429,10 @@ class PublishingSchedulingAgent {
       });
       
       this.logger.info(`Captions uploaded for video: ${videoId}`);
+      return null;
     } catch (error) {
       this.logger.error(`Failed to upload captions: ${error.message}`);
+      return `Captions not uploaded: ${error.message}`;
     }
   }
 

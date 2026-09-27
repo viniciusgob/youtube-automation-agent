@@ -1,6 +1,6 @@
 const { Logger } = require('../utils/logger');
 const { AITextService } = require('../utils/ai-text-service');
-const { getContentLanguage } = require('../utils/content-language');
+const { getContentLanguage, isEnglish } = require('../utils/content-language');
 
 class SEOOptimizerAgent {
   constructor(db, credentials) {
@@ -131,6 +131,9 @@ Keep tags under YouTube's 500 character total guidance. Avoid fabricated statist
         tags
       };
     } catch (error) {
+      // The built-in templates are English-only; for other channel languages fail the stage
+      // (it can be resumed) instead of producing English filler content.
+      if (!isEnglish()) throw error;
       this.logger.warn(`AI SEO optimization failed; using template fallback: ${error.message}`);
       return null;
     }

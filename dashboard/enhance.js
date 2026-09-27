@@ -341,10 +341,11 @@
       toast.innerHTML = `<span class="toast-icon ${type}">${iconPath}</span><span class="toast-msg"></span>`;
       toast.querySelector('.toast-msg').textContent = message;
       toast.className = `toast ${type}`;
+      if (typeof window.raiseToast === 'function') window.raiseToast(toast);
       void toast.offsetWidth;
       toast.classList.add('armed');
       clearTimeout(ui.toastTimer);
-      ui.toastTimer = setTimeout(() => toast.classList.add('hidden'), 4200);
+      ui.toastTimer = setTimeout(() => toast.classList.add('hidden'), type === 'error' ? 9000 : 4200);
     };
   }
 

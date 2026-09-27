@@ -5,7 +5,7 @@ const path = require('path');
 const axios = require('axios');
 const sharp = require('sharp');
 const { Logger } = require('./logger');
-const { runFFmpeg, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
+const { runFFmpeg, checkFFmpeg, ffmpegInstallHint, getMediaDuration } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
 
 class AIVideoGenerator {
@@ -408,6 +408,14 @@ class AIVideoGenerator {
 
   async renderMediaTimeline(segments, outputPath) {
     const args = ['-y'];
+    const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+    segments = await Promise.all(segments.map(async (segment, index) => {
+      // Older productions stored placeholder .info files as scene visuals; swap in a gradient image.
+      if (segment.type !== 'image' || imageExtensions.has(path.extname(String(segment.path)).toLowerCase())) return segment;
+      const fallbackPath = `${outputPath}.fallback_${index}.png`;
+      await this.createGradientImage(fallbackPath, `${segment.path}|${index}`);
+      return { ...segment, path: fallbackPath };
+    }));
     for (const segment of segments) {
       if (segment.type === 'image') args.push('-loop', '1', '-t', Number(segment.duration).toFixed(2), '-framerate', '30', '-i', segment.path);
       else args.push('-stream_loop', '-1', '-i', segment.path);
@@ -417,7 +425,13 @@ class AIVideoGenerator {
     );
     filters.push(`${segments.map((_, index) => `[v${index}]`).join('')}concat=n=${segments.length}:v=1:a=0[vout]`);
     args.push('-filter_complex', filters.join(';'), '-map', '[vout]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', outputPath);
-    await runFFmpeg(args);
+    try {
+      await runFFmpeg(args);
+    } finally {
+      await Promise.all(segments
+        .filter(segment => String(segment.path).startsWith(`${outputPath}.fallback_`))
+        .map(segment => fs.unlink(segment.path).catch(() => {})));
+    }
     return outputPath;
   }
 
@@ -508,7 +522,14 @@ class AIVideoGenerator {
       }
 
       const videoPath = outputPath.replace('.mp4', '_visual.mp4');
-      const duration = this.calculateScriptDuration(script);
+      // Match the slideshow to the real narration length; the word-count estimate only understands
+      // the legacy script shape and could fall back to 30s, and -shortest then cut the narration.
+      const narrationSeconds = await this.isUsableAudioFile(audioPath)
+        ? await Promise.resolve(getMediaDuration(audioPath)).catch(() => null)
+        : null;
+      const duration = Number.isFinite(narrationSeconds) && narrationSeconds > 0
+        ? narrationSeconds + 0.5
+        : this.calculateScriptDuration(script);
       await this.renderSlidesToVideo(stills, duration, videoPath);
 
       // Add audio
@@ -527,7 +548,9 @@ class AIVideoGenerator {
     }
 
     const fade = 0.5;
-    const perSlide = Math.max(2, totalDuration / stills.length);
+    // Crossfades overlap consecutive slides, so add the overlap back to reach totalDuration.
+    const overlap = stills.length > 1 ? fade * (stills.length - 1) : 0;
+    const perSlide = Math.max(2, (totalDuration + overlap) / stills.length);
 
     const args = ['-y'];
     for (const still of stills) {
@@ -932,19 +955,28 @@ class AIVideoGenerator {
     
     const paths = [];
     for (let i = 0; i < count; i++) {
-      const assetPath = path.join(__dirname, '..', 'data', 'assets', `visual_sim_${Date.now()}_${i}.info`);
-      
-      await fs.writeFile(assetPath, JSON.stringify({
-        message: 'AI visual asset would be generated here',
-        prompt: prompt,
-        style: style,
-        timestamp: new Date().toISOString()
-      }, null, 2));
-      
+      const assetPath = path.join(__dirname, '..', 'data', 'assets', `visual_gradient_${Date.now()}_${i}.png`);
+      await this.createGradientImage(assetPath, `${prompt}|${i}`);
       paths.push(assetPath);
     }
     
     return paths;
+  }
+
+  // Real 1920x1080 PNG background used when no image provider is available,
+  // so slideshow and scene rebuilds always have a decodable visual.
+  async createGradientImage(outputPath, seed = '') {
+    const palettes = [
+      ['#667eea', '#764ba2'], ['#0f2027', '#2c5364'], ['#ee0979', '#ff6a00'],
+      ['#1d976c', '#93f9b9'], ['#141e30', '#243b55'], ['#8e2de2', '#4a00e0']
+    ];
+    let hash = 0;
+    for (const char of String(seed)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+    const [from, to] = palettes[hash % palettes.length];
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient></defs><rect width="1920" height="1080" fill="url(#g)"/></svg>`;
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await sharp(Buffer.from(svg)).png().toFile(outputPath);
+    return outputPath;
   }
 
   async simulateVideoGeneration(script, visualAssets, audioPath, outputPath) {

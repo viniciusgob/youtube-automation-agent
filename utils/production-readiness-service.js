@@ -138,7 +138,7 @@ class ProductionReadinessService {
     if (this.probes.text) return this.probes.text();
     const service = new AITextService(this.credentialManager.credentials || {});
     if (!service.isAvailable()) throw new Error('No AI text provider is configured');
-    const response = await service.generateText('Reply with exactly READY.', { maxTokens: 16, temperature: 0, language: false });
+    const response = await service.generateText('Reply with exactly READY.', { maxTokens: 1024, temperature: 0, language: false });
     return { message: `${service.providerName} returned a live response.`, details: { provider: service.providerName, responseReceived: Boolean(response) } };
   }
 

@@ -224,6 +224,11 @@ class ProductionManagementAgent {
       // Try to generate AI thumbnail first
       const thumbnailScript = thumbnail.script || script || { title: thumbnail.title || 'Untitled Video' };
       const aiThumbnail = await this.aiVideoGenerator.generateThumbnail(thumbnailScript, 'ethereal');
+      // The generator returns a .info placeholder when no image provider is available; keep the
+      // designer's real image in that case instead of replacing it with an unusable file.
+      if (!/\.(png|jpe?g|webp)$/i.test(String(aiThumbnail?.path || '')) && thumbnail.path) {
+        return { ...thumbnail, originalPath: thumbnail.path, generatedWith: 'designer' };
+      }
       
       return {
         path: aiThumbnail.path,

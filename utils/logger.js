@@ -66,7 +66,8 @@ class Logger {
     } else {
       this.winston.error(message, ...args);
     }
-    console.log(this.formatConsoleMessage('ERROR', message, chalk.red));
+    const detail = error ? ` ${String(error.message || error).split('\n')[0].slice(0, 300)}` : '';
+    console.log(this.formatConsoleMessage('ERROR', `${message}${detail}`, chalk.red));
     if (error && process.env.NODE_ENV !== 'production') {
       console.error(chalk.red(error.stack));
     }

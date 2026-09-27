@@ -1,5 +1,6 @@
 const { Logger } = require('../utils/logger');
 const { AITextService } = require('../utils/ai-text-service');
+const { isEnglish } = require('../utils/content-language');
 
 class ContentStrategyAgent {
   constructor(db, credentials) {
@@ -475,6 +476,9 @@ Avoid fabricated claims and unsupported numbers.`;
         createdAt: new Date().toISOString()
       };
     } catch (error) {
+      // The built-in templates are English-only; for other channel languages fail the stage
+      // (it can be resumed) instead of producing English filler content.
+      if (!isEnglish()) throw error;
       this.logger.warn(`AI content strategy failed; using template fallback: ${error.message}`);
       return null;
     }

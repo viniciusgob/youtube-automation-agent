@@ -374,7 +374,9 @@ class YouTubeAutomationAgent {
   }
   setupAPI() {
     this.app.use(express.json({ limit: '1mb' }));
-    this.app.use(express.static(path.join(__dirname, 'dashboard')));
+    // Revalidate dashboard files on every load so browsers never keep running stale UI code after an update.
+    const noCache = res => res.setHeader('Cache-Control', 'no-cache');
+    this.app.use(express.static(path.join(__dirname, 'dashboard'), { setHeaders: noCache }));
 
     if (!process.env.API_KEY) {
       this.logger.warn('API_KEY is not set; mutating API routes are unprotected');
@@ -382,6 +384,7 @@ class YouTubeAutomationAgent {
     
     // Main dashboard route
     this.app.get('/', (req, res) => {
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(__dirname, 'dashboard', 'index.html'));
     });
     
@@ -1695,8 +1698,9 @@ class YouTubeAutomationAgent {
         }
       })),
       assetUrls: {
-        video: bundle.assets?.finalVideo?.path && !bundle.assets?.finalVideo?.simulated ? `/api/content/${bundle.id}/asset/video` : null,
-        thumbnail: bundle.assets?.thumbnail?.path ? `/api/content/${bundle.id}/asset/thumbnail` : null,
+        // Version the URLs by file name so the browser never replays a stale cached asset after a rebuild.
+        video: bundle.assets?.finalVideo?.path && !bundle.assets?.finalVideo?.simulated ? `/api/content/${bundle.id}/asset/video?v=${encodeURIComponent(path.basename(bundle.assets.finalVideo.path))}` : null,
+        thumbnail: bundle.assets?.thumbnail?.path ? `/api/content/${bundle.id}/asset/thumbnail?v=${encodeURIComponent(path.basename(bundle.assets.thumbnail.path))}` : null,
         experimentThumbnails: (experiment?.thumbnailVariants || []).map((_variant, index) =>
           `/api/content/${bundle.id}/asset/experiment-thumbnail-${index}`
         ),

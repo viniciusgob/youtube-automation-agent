@@ -50,12 +50,23 @@ async function api(url, options = {}, retry = true) {
   return data;
 }
 
+// Modal <dialog>s live in the browser's top layer, above any z-index. Re-opening the toast as a
+// popover puts it on top of an open dialog so messages raised from inside it stay visible.
+function raiseToast(toast) {
+  if (typeof toast.showPopover !== 'function') return;
+  try {
+    if (toast.matches(':popover-open')) toast.hidePopover();
+    toast.showPopover();
+  } catch (_error) { /* popover unsupported; fall back to the regular fixed toast */ }
+}
+
 function showToast(message, type = 'success') {
   const toast = $('#toast');
   toast.textContent = message;
   toast.className = `toast ${type}`;
+  raiseToast(toast);
   clearTimeout(ui.toastTimer);
-  ui.toastTimer = setTimeout(() => toast.classList.add('hidden'), 4200);
+  ui.toastTimer = setTimeout(() => toast.classList.add('hidden'), type === 'error' ? 9000 : 4200);
 }
 
 function empty(message) {
@@ -83,6 +94,7 @@ function timeAgo(value) {
 }
 
 const DISPLAY_LABELS_PT = {
+  private: 'privado', public: 'público', unlisted: 'não listado',
   unknown: 'desconhecido',
   pending: 'pendente',
   pending_review: 'revisão pendente',
@@ -300,7 +312,7 @@ function renderReviews(reviews) {
   container.innerHTML = reviews.slice(0, 5).map(item => `
     <article class="review-card">
       ${item.hasThumbnail ? `<img class="review-thumb" src="/api/content/${encodeURIComponent(item.id)}/asset/thumbnail" alt="">` : '<div class="review-thumb"></div>'}
-      <div class="review-meta"><strong>${escapeHTML(item.title)}</strong><div class="meta-line">${statusChip(item.review_status)} · Qualidade ${qualityScore(item.qualityChecks)}%</div></div>
+      <div class="review-meta"><strong title="${escapeHTML(item.title)}">${escapeHTML(item.title)}</strong><div class="meta-line">${statusChip(item.review_status)} · Qualidade ${qualityScore(item.qualityChecks)}%</div></div>
       <button class="button secondary small" data-open-content="${escapeHTML(item.id)}">Revisar</button>
     </article>`).join('');
 }
@@ -323,7 +335,7 @@ function renderJobs(jobs) {
     return `
     <article class="job-card">
       <div class="job-meta">
-        <strong>${escapeHTML(job.title || job.topic || 'Tema escolhido pelo agente')}</strong>
+        <strong title="${escapeHTML(job.title || job.topic || 'Tema escolhido pelo agente')}">${escapeHTML(job.title || job.topic || 'Tema escolhido pelo agente')}</strong>
         <div class="meta-line">${statusChip(job.status)} · ${escapeHTML(label(job.stage))} · ${timeAgo(job.updated_at)}</div>
         ${checkpoints.length ? `<div class="checkpoint-line">${completed.size}/${stages.length} etapas salvas${job.details?.reusedStages?.length ? ` · ${job.details.reusedStages.length} reaproveitada${job.details.reusedStages.length === 1 ? '' : 's'}` : ''}</div>` : ''}
         ${mediaTasks.length ? `<div class="checkpoint-line">Vídeo: ${mediaCompleted}/${mediaTasks.length} clipes prontos · ${escapeHTML(mediaProviders)}</div>` : ''}
@@ -1149,9 +1161,18 @@ async function openContent(productionId) {
             <label><span>Privacidade</span><select name="privacyStatus"><option value="private" ${data.privacyStatus === 'private' ? 'selected' : ''}>Privado</option><option value="unlisted" ${data.privacyStatus === 'unlisted' ? 'selected' : ''}>Não listado</option><option value="public" ${data.privacyStatus === 'public' ? 'selected' : ''}>Público</option></select></label>
           </div>
           <div class="settings-row">
-            <label class="toggle"><input name="factChecked" type="checkbox" ${data.factChecked ? 'checked' : ''}><span></span> Fatos e afirmações revisados</label>
-            <label class="toggle"><input name="rightsConfirmed" type="checkbox" ${data.rightsConfirmed ? 'checked' : ''}><span></span> Direitos de mídia confirmados</label>
+            <label class="toggle required-toggle"><input name="factChecked" type="checkbox" ${data.factChecked ? 'checked' : ''}><span></span> Fatos e afirmações revisados <b class="required-mark" aria-hidden="true">*</b></label>
+            <label class="toggle required-toggle"><input name="rightsConfirmed" type="checkbox" ${data.rightsConfirmed ? 'checked' : ''}><span></span> Direitos de mídia confirmados <b class="required-mark" aria-hidden="true">*</b></label>
           </div>
+          ${canReview ? `<div id="approval-requirements" class="approval-requirements" role="note">
+            <strong>Obrigatório para aprovar e agendar:</strong>
+            <ul>
+              <li data-requirement="factChecked" class="${data.factChecked ? 'done' : ''}">Marque <b>Fatos e afirmações revisados</b> depois de conferir o roteiro.</li>
+              <li data-requirement="rightsConfirmed" class="${data.rightsConfirmed ? 'done' : ''}">Marque <b>Direitos de mídia confirmados</b> depois de conferir imagens, áudio e vídeo.</li>
+              ${Number(item.provenance?.summary?.unresolvedClaims || 0) > 0 ? `<li data-requirement="provenance">Resolva ${Number(item.provenance.summary.unresolvedClaims)} afirmaç${Number(item.provenance.summary.unresolvedClaims) === 1 ? 'ão factual pendente' : 'ões factuais pendentes'} na <b>Central de evidências</b> (ligue cada uma a uma fonte verificada ou dispense com uma justificativa).</li>` : ''}
+            </ul>
+          </div>` : ''}
+          <div id="approval-feedback" class="approval-feedback hidden" role="alert" aria-live="assertive"></div>
           ${item.schedule && !['published', 'uploading', 'uploaded', 'reconciliation_required'].includes(item.schedule.status) ? `<div class="form-actions"><button type="button" class="button secondary" data-reschedule-content="${escapeHTML(item.id)}">Reagendar</button><button type="button" class="button primary" data-publish-now-content="${escapeHTML(item.id)}">Publicar agora</button><button type="button" class="button danger" data-delete-schedule="${escapeHTML(item.id)}">Excluir agendamento</button></div>` : ''}
           ${canReview ? `<div class="form-actions"><button type="button" class="button primary" data-approve-content="${escapeHTML(item.id)}">Aprovar e agendar</button><button type="button" class="button secondary" data-save-content="${escapeHTML(item.id)}">Salvar rascunho</button><button type="button" class="button danger" data-reject-content="${escapeHTML(item.id)}">Rejeitar</button><button type="button" class="button ghost" data-retry-content="${escapeHTML(item.id)}">Regenerar</button></div>` : `<a class="button secondary" href="${escapeHTML(item.schedule?.youtube_url || '#')}" target="_blank" rel="noopener">Abrir no YouTube</a>`}
       </form>`;
@@ -1294,11 +1315,132 @@ async function persistProvenance(productionId, successMessage = null) {
     }
     return result;
   } catch (error) {
-    showToast(error.message, 'error');
+    const message = translateServerError(error.message);
+    showApprovalFeedback(message);
+    showToast(message, 'error');
     throw error;
   } finally {
     $('#loading').classList.remove('active');
   }
+}
+
+// Mirrors the server rules in utils/provenance-service.js so problems are shown next to the claim
+// in Portuguese before any request is sent. requireResolved=true is the approval gate.
+function validateProvenanceForm(requireResolved = false) {
+  const verified = new Set($$('[data-provenance-source]')
+    .filter(item => item.querySelector('[data-field="status"]')?.value === 'verified')
+    .map(item => item.dataset.id));
+  const problems = [];
+  $$('[data-provenance-claim]').forEach((item, index) => {
+    item.classList.remove('claim-invalid');
+    item.querySelector('.claim-error')?.remove();
+    const status = item.querySelector('[data-field="status"]')?.value;
+    const notes = item.querySelector('[data-field="notes"]')?.value.trim();
+    const linked = [...item.querySelectorAll('[data-claim-source]:checked')].map(input => input.dataset.claimSource);
+    let message = null;
+    if (status === 'waived' && !notes) message = 'Escreva uma justificativa em “Notas do revisor” para dispensar esta afirmação.';
+    else if (status === 'supported' && !linked.some(id => verified.has(id))) message = 'Para marcar como “Comprovada”, ligue a afirmação a pelo menos uma fonte com status verificado.';
+    else if (requireResolved && !['supported', 'waived'].includes(status)) message = 'Afirmação ainda não resolvida: escolha “Comprovada” (com fonte) ou “Dispensada com nota” (com justificativa).';
+    if (!message) return;
+    item.classList.add('claim-invalid');
+    item.querySelector('.provenance-item-heading')?.insertAdjacentHTML('afterend', `<p class="claim-error">⚠️ ${escapeHTML(message)}</p>`);
+    problems.push({ index: index + 1, message, element: item });
+  });
+  return problems;
+}
+
+function showApprovalFeedback(message, type = 'error', details = []) {
+  const box = $('#approval-feedback');
+  if (!box) return;
+  box.className = `approval-feedback ${type}${message ? '' : ' hidden'}`;
+  box.innerHTML = message
+    ? `<span>${escapeHTML(message)}</span>${details.length ? `<ul>${details.map(detail => `<li>${detail}</li>`).join('')}</ul>` : ''}`
+    : '';
+  if (message) box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Runs a schedule/publish action and reports the outcome inside the dialog (it is reopened with the
+// fresh state first, so the message is not lost), plus a toast.
+async function runScheduleAction(productionId, request, describeSuccess) {
+  $('#loading').classList.add('active');
+  let outcome;
+  try {
+    const data = await api(request.url, { method: request.method, body: request.body === undefined ? undefined : JSON.stringify(request.body) });
+    outcome = { type: 'success', ...describeSuccess(data?.result || {}) };
+    if (outcome.warnings?.length) outcome.type = 'warning';
+  } catch (error) {
+    outcome = { type: 'error', message: `${request.failurePrefix} ${translateServerError(error.message, error.data?.quality?.blockingFailures)}` };
+  } finally {
+    $('#loading').classList.remove('active');
+  }
+  await refreshDashboard(true).catch(() => {});
+  if ($('#content-dialog').open) $('#content-dialog').close();
+  await openContent(productionId).catch(() => {});
+  const details = [...(outcome.details || []), ...(outcome.warnings || []).map(warning => `⚠️ ${escapeHTML(translatePublishWarning(warning))}`)];
+  showApprovalFeedback(outcome.message, outcome.type, details);
+  showToast(outcome.message, outcome.type === 'error' ? 'error' : outcome.type === 'warning' ? 'warning' : 'success');
+  return outcome;
+}
+
+function translatePublishWarning(warning) {
+  const text = String(warning || '');
+  if (/no real thumbnail image/i.test(text)) return 'A thumbnail personalizada não foi enviada: não havia imagem real de thumbnail, então o YouTube usará um quadro automático do vídeo.';
+  if (/^Thumbnail not uploaded:/i.test(text)) return `A thumbnail personalizada não foi enviada: ${text.replace(/^Thumbnail not uploaded:\s*/i, '')}`;
+  if (/^Captions not uploaded:/i.test(text)) return `As legendas não foram enviadas: ${text.replace(/^Captions not uploaded:\s*/i, '')}`;
+  return text;
+}
+
+function reportProvenanceProblems(problems) {
+  const text = problems.length === 1
+    ? `A afirmação ${problems[0].index} precisa de ajuste: ${problems[0].message}`
+    : `${problems.length} afirmações precisam de ajuste na Central de evidências (destacadas em vermelho).`;
+  showApprovalFeedback(text);
+  showToast(text, 'error');
+  problems[0].element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  problems[0].element.querySelector('.claim-invalid [data-field="notes"], [data-field="status"]')?.focus({ preventScroll: true });
+}
+
+function markApprovalRequirements(missing) {
+  const box = $('#approval-requirements');
+  if (!box) return;
+  box.classList.add('attention');
+  for (const name of missing) {
+    box.querySelector(`[data-requirement="${name}"]`)?.classList.add('missing');
+    const input = $('#content-review-form')?.elements[name];
+    input?.closest('.toggle')?.classList.add('missing');
+  }
+  box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+const QUALITY_FAILURE_LABELS_PT = {
+  title: 'título', description: 'descrição', script: 'roteiro', video: 'vídeo final', video_file: 'arquivo de vídeo',
+  narration: 'narração', brand_policy: 'política da marca', provenance: 'afirmações factuais sem evidência (Central de evidências)',
+  scene_integrity: 'cenas desatualizadas (reconstrua o vídeo final)', scene_rights: 'direitos das mídias substituídas'
+};
+
+function translateServerError(message, failures) {
+  const text = String(message || '');
+  if (/waived claim requires a reviewer note/i.test(text)) return 'Uma afirmação “Dispensada com nota” está sem justificativa em “Notas do revisor”.';
+  if (/supported claim must link to at least one verified source/i.test(text)) return 'Uma afirmação “Comprovada” precisa estar ligada a pelo menos uma fonte verificada.';
+  if (/Provenance is locked/i.test(text)) return 'As evidências ficam bloqueadas depois que o conteúdo é aprovado ou agendado.';
+  if (/Choose a future publish time/i.test(text)) return 'Escolha um horário de publicação no futuro.';
+  if (/video file not found|placeholder asset/i.test(text)) return 'O arquivo MP4 final não foi encontrado. Reconstrua o vídeo final antes de publicar.';
+  if (/narration is missing/i.test(text)) return 'A narração está ausente. Gere a narração novamente antes de publicar.';
+  if (/every factual claim is supported or explicitly waived/i.test(text)) return 'Há afirmações factuais pendentes na Central de evidências.';
+  if (/production readiness gate/i.test(text)) return `A verificação de prontidão está bloqueando a publicação (${text.replace(/^.*Fix\s*/i, '')}). Rode a verificação na tela Prontidão.`;
+  if (/previous upload may have reached YouTube|could not be verified on YouTube|Upload outcome is unknown/i.test(text)) return 'Um envio anterior pode ter chegado ao YouTube sem confirmação. Verifique o canal antes de tentar de novo.';
+  if (/cannot be rescheduled while it is/i.test(text)) return `Não é possível reagendar com o status atual (${label(text.split('while it is').pop().trim())}).`;
+  if (/schedule cannot be deleted while content is/i.test(text)) return `Não é possível excluir o agendamento com o status atual (${label(text.split('content is').pop().trim())}).`;
+  if (/not found in queue|Scheduled content not found|Content not found/i.test(text)) return 'Este conteúdo não está na fila de publicação. Aprove e agende primeiro.';
+  if (/quota|quotaExceeded|dailyLimitExceeded/i.test(text)) return 'A cota diária da API do YouTube foi atingida. Tente novamente amanhã.';
+  if (/uploadLimitExceeded/i.test(text)) return 'O canal atingiu o limite de envios do YouTube por hoje.';
+  if (/invalid_grant|invalid credentials|Login Required|unauthorized/i.test(text)) return 'A autorização do YouTube expirou ou foi revogada. Rode “npm run walkthrough” para autorizar o canal de novo.';
+  if (/Publishing requires completed setup/i.test(text)) return 'A publicação exige que a configuração esteja concluída.';
+  if (/Confirm the factual review and media rights/i.test(text)) return 'Antes de aprovar e agendar, marque “Fatos e afirmações revisados” e “Direitos de mídia confirmados”.';
+  if (/blocking quality failures/i.test(text) && failures?.length) {
+    return `Não é possível aprovar ainda. Pendências: ${failures.map(id => QUALITY_FAILURE_LABELS_PT[id] || label(id)).join('; ')}.`;
+  }
+  return failures?.length ? `${text}: ${failures.join(', ')}` : text;
 }
 
 async function mutate(url, method, body, successMessage) {
@@ -1310,12 +1452,31 @@ async function mutate(url, method, body, successMessage) {
     return result;
   } catch (error) {
     const failures = error.data?.quality?.blockingFailures;
-    showToast(failures ? `${error.message}: ${failures.join(', ')}` : error.message, 'error');
+    const message = translateServerError(error.message, failures);
+    showApprovalFeedback(message);
+    showToast(message, 'error');
+    if (failures?.includes('provenance')) markApprovalRequirements(['provenance']);
     throw error;
   } finally {
     $('#loading').classList.remove('active');
   }
 }
+
+document.addEventListener('input', event => {
+  const claim = event.target.closest?.('[data-provenance-claim].claim-invalid');
+  if (claim && event.target.matches('[data-field="notes"], [data-field="status"], [data-claim-source]')) {
+    claim.classList.remove('claim-invalid');
+    claim.querySelector('.claim-error')?.remove();
+  }
+});
+
+document.addEventListener('change', event => {
+  const input = event.target;
+  if (!['factChecked', 'rightsConfirmed'].includes(input?.name) || !input.closest('#content-review-form')) return;
+  input.closest('.toggle')?.classList.toggle('missing', !input.checked && input.closest('.toggle').classList.contains('missing'));
+  $(`#approval-requirements [data-requirement="${input.name}"]`)?.classList.toggle('done', input.checked);
+  if (input.checked) $(`#approval-requirements [data-requirement="${input.name}"]`)?.classList.remove('missing');
+});
 
 document.addEventListener('click', async event => {
   const nav = event.target.closest('[data-view]');
@@ -1615,12 +1776,22 @@ document.addEventListener('click', async event => {
   const rebuildScenes = event.target.closest('[data-rebuild-scenes]');
   if (rebuildScenes) {
     const productionId = rebuildScenes.dataset.rebuildScenes;
+    if (rebuildScenes.disabled) return;
     if (confirm('Reconstruir um novo MP4 final a partir da linha do tempo de cenas atual? O vídeo final anterior será preservado.')) {
+      const originalLabel = rebuildScenes.textContent;
+      rebuildScenes.disabled = true;
+      rebuildScenes.textContent = 'Reconstruindo…';
+      $('#loading').classList.add('active');
+      showToast('Reconstruindo o vídeo final. Isso pode levar alguns minutos…');
       try {
         await api(`/api/content/${encodeURIComponent(productionId)}/scenes/rebuild`, { method: 'POST', body: '{}' });
         await refreshContentDialog(productionId, 'Vídeo final reconstruído a partir da linha do tempo reparada. Revise-o antes de aprovar.');
       } catch (error) {
         showToast(error.message, 'error');
+      } finally {
+        $('#loading').classList.remove('active');
+        rebuildScenes.disabled = false;
+        rebuildScenes.textContent = originalLabel;
       }
     }
     return;
@@ -1651,6 +1822,8 @@ document.addEventListener('click', async event => {
   const saveProvenance = event.target.closest('[data-save-provenance]');
   if (saveProvenance) {
     const productionId = $('#content-review-form')?.dataset.productionId;
+    const problems = validateProvenanceForm(false);
+    if (problems.length) { reportProvenanceProblems(problems); return; }
     if (productionId) await persistProvenance(productionId, 'Revisão de evidências salva.').catch(() => {});
     return;
   }
@@ -1665,41 +1838,73 @@ document.addEventListener('click', async event => {
 
   const approve = event.target.closest('[data-approve-content]');
   if (approve) {
+    const form = $('#content-review-form');
+    const missing = ['factChecked', 'rightsConfirmed'].filter(name => form?.elements[name] && !form.elements[name].checked);
+    showApprovalFeedback('');
+    const claimProblems = validateProvenanceForm(true);
+    if (missing.length) {
+      markApprovalRequirements(missing);
+      const text = `Antes de aprovar e agendar, marque: ${missing.map(name => name === 'factChecked' ? '“Fatos e afirmações revisados”' : '“Direitos de mídia confirmados”').join(' e ')}.`;
+      showApprovalFeedback(claimProblems.length ? `${text} Também há ${claimProblems.length} afirmaç${claimProblems.length === 1 ? 'ão' : 'ões'} a resolver na Central de evidências.` : text);
+      showToast(text, 'error');
+      return;
+    }
+    if (claimProblems.length) {
+      markApprovalRequirements(['provenance']);
+      reportProvenanceProblems(claimProblems);
+      return;
+    }
     try {
       await persistProvenance(approve.dataset.approveContent);
+      const publishTime = contentFormData().publishTime;
       await mutate(`/api/content/${encodeURIComponent(approve.dataset.approveContent)}/approve`, 'POST', contentFormData(), 'Conteúdo aprovado e agendado.');
       $('#content-dialog').close();
-    } catch (_error) { /* toast already shown */ }
+      await openContent(approve.dataset.approveContent);
+      showApprovalFeedback(`✅ Conteúdo aprovado e agendado${publishTime ? ` para ${formatDate(publishTime)}` : ''}. Ele será publicado automaticamente no horário, com o servidor ligado.`, 'success');
+    } catch (_error) { /* feedback already shown */ }
   }
 
   const reschedule = event.target.closest('[data-reschedule-content]');
   if (reschedule) {
     const publishTime = contentFormData().publishTime;
-    if (!publishTime) return showToast('Escolha primeiro um horário de publicação futuro.', 'error');
-    try {
-      await mutate(`/api/content/${encodeURIComponent(reschedule.dataset.rescheduleContent)}/schedule`, 'PATCH', { publishTime }, 'Conteúdo reagendado.');
-      await openContent(reschedule.dataset.rescheduleContent);
-    } catch (_error) { /* toast already shown */ }
+    if (!publishTime || new Date(publishTime) <= new Date()) {
+      const message = 'Não foi possível reagendar: escolha em “Horário de publicação” uma data e hora no futuro.';
+      showApprovalFeedback(message, 'error');
+      showToast(message, 'error');
+      return;
+    }
+    await runScheduleAction(reschedule.dataset.rescheduleContent, {
+      url: `/api/content/${encodeURIComponent(reschedule.dataset.rescheduleContent)}/schedule`, method: 'PATCH', body: { publishTime },
+      failurePrefix: 'Não foi possível reagendar:'
+    }, () => ({ message: `✅ Conteúdo reagendado para ${formatDate(publishTime)}.` }));
     return;
   }
 
   const publishNow = event.target.closest('[data-publish-now-content]');
   if (publishNow) {
     if (!confirm('Publicar este vídeo no YouTube agora com a configuração de privacidade selecionada?')) return;
-    try {
-      await mutate(`/api/content/${encodeURIComponent(publishNow.dataset.publishNowContent)}/publish-now`, 'POST', {}, 'Conteúdo publicado.');
-      $('#content-dialog').close();
-    } catch (_error) { /* toast already shown */ }
+    const button = publishNow;
+    button.disabled = true;
+    button.textContent = 'Publicando…';
+    showApprovalFeedback('Enviando o vídeo para o YouTube. Isso pode levar alguns minutos, não feche esta janela…', 'info');
+    await runScheduleAction(publishNow.dataset.publishNowContent, {
+      url: `/api/content/${encodeURIComponent(publishNow.dataset.publishNowContent)}/publish-now`, method: 'POST', body: {},
+      failurePrefix: 'Falha ao publicar no YouTube:'
+    }, result => ({
+      message: `✅ Vídeo publicado no YouTube${result.privacyStatus || result.metadata?.privacyStatus ? ` como ${label(result.privacyStatus || result.metadata.privacyStatus)}` : ''}.`,
+      details: result.youtubeUrl ? [`<a href="${escapeHTML(result.youtubeUrl)}" target="_blank" rel="noopener">Abrir no YouTube: ${escapeHTML(result.youtubeUrl)}</a>`] : [],
+      warnings: result.warnings || []
+    }));
     return;
   }
 
   const deleteSchedule = event.target.closest('[data-delete-schedule]');
   if (deleteSchedule) {
     if (!confirm('Excluir este agendamento? O conteúdo e os recursos gerados serão mantidos.')) return;
-    try {
-      await mutate(`/api/content/${encodeURIComponent(deleteSchedule.dataset.deleteSchedule)}/schedule`, 'DELETE', undefined, 'Agendamento excluído; o conteúdo gerado foi mantido.');
-      await openContent(deleteSchedule.dataset.deleteSchedule);
-    } catch (_error) { /* toast already shown */ }
+    await runScheduleAction(deleteSchedule.dataset.deleteSchedule, {
+      url: `/api/content/${encodeURIComponent(deleteSchedule.dataset.deleteSchedule)}/schedule`, method: 'DELETE',
+      failurePrefix: 'Não foi possível excluir o agendamento:'
+    }, () => ({ message: '✅ Agendamento excluído. O conteúdo gerado foi mantido.' }));
     return;
   }
 

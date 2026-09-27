@@ -93,7 +93,7 @@ class AITextService {
     try {
       const { GoogleGenAI } = require('@google/genai');
       this.gemini = new GoogleGenAI({ apiKey });
-      this.model = model || GEMINI_DEFAULT_MODEL;
+      this.model = model || process.env.GEMINI_TEXT_MODEL || GEMINI_DEFAULT_MODEL;
       this.providerName = 'Google Gemini';
       this.logger.info(`Gemini initialized (model: ${this.model})`);
     } catch (error) {
@@ -103,18 +103,77 @@ class AITextService {
 
   async generateText(prompt, options = {}) {
     if (options.language !== false) prompt += languageInstruction();
+    const attempts = Math.max(1, Number(process.env.AI_TEXT_MAX_ATTEMPTS || 3));
+    const models = [options.model || this.model, ...(options.model ? [] : this._fallbackModels())];
+    let lastError;
+    for (const [index, model] of models.entries()) {
+      if (index > 0) this.logger.warn(`${this.providerName} model ${models[index - 1]} is unavailable; falling back to ${model}`);
+      let maxTokens = options.maxTokens || 2048;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+          return await this._generateOnce(prompt, { ...options, model, maxTokens });
+        } catch (error) {
+          lastError = error;
+          if (error.truncated && attempt < attempts) {
+            maxTokens *= 2;
+            this.logger.warn(`${this.providerName} response was cut off at the token limit; retrying with maxTokens=${maxTokens}`);
+            continue;
+          }
+          // A per-model quota (429) or overload won't clear by retrying the same model; try the next one.
+          if (this._isQuotaError(error)) break;
+          if (!this._isTransientError(error)) throw error;
+          if (attempt >= attempts) break;
+          const delay = 2000 * attempt;
+          this.logger.warn(`${this.providerName} is temporarily unavailable; retrying in ${delay / 1000}s (attempt ${attempt + 1}/${attempts})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  // Gemini only: alternative models tried when the primary is overloaded or out of quota.
+  // Override with GEMINI_FALLBACK_MODELS (comma-separated); set it to "none" to disable.
+  _fallbackModels() {
+    if (!this.gemini) return [];
+    const configured = process.env.GEMINI_FALLBACK_MODELS;
+    if (String(configured).trim().toLowerCase() === 'none') return [];
+    const list = configured ? configured.split(',') : ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
+    return [...new Set(list.map(model => model.trim()).filter(model => model && model !== this.model))];
+  }
+
+  _isQuotaError(error) {
+    const status = Number(error?.status || error?.code || error?.error?.code);
+    return status === 429 || /\b429\b|RESOURCE_EXHAUSTED|exceeded your current quota/i.test(String(error?.message || ''));
+  }
+
+  // Provider overload / server errors (e.g. Gemini 503 "high demand") usually clear within seconds.
+  _isTransientError(error) {
+    const status = Number(error?.status || error?.code || error?.error?.code);
+    if ([500, 502, 503, 504].includes(status)) return true;
+    return /\b(503|502|500|504)\b|UNAVAILABLE|high demand|overloaded|temporarily/i.test(String(error?.message || ''));
+  }
+
+  async _generateOnce(prompt, options = {}) {
     const model = options.model || this.model;
     const maxTokens = options.maxTokens || 2048;
     const temperature = options.temperature ?? 0.7;
 
     if (this.gemini) {
-      const config = { maxOutputTokens: maxTokens };
+      // Gemini "thinking" tokens count against maxOutputTokens, so reserve headroom on top of
+      // the answer budget; otherwise long answers (e.g. pt-BR descriptions) get cut mid-JSON.
+      const thinkingHeadroom = Math.max(0, Number(process.env.GEMINI_THINKING_HEADROOM ?? 6144));
+      const config = { maxOutputTokens: maxTokens + thinkingHeadroom };
+      if (options.json ?? /return only valid json/i.test(prompt)) config.responseMimeType = 'application/json';
       if (!/^gemini-3\.(?:[5-9]|\d{2,})-/.test(model)) config.temperature = temperature;
       const response = await this.gemini.models.generateContent({
         model,
         contents: prompt,
         config,
       });
+      if (response?.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+        throw this._truncatedError(model);
+      }
       const text = response && response.text;
       if (typeof text !== 'string' || !text.trim()) {
         throw new Error(
@@ -160,7 +219,14 @@ class AITextService {
     }
   }
 
+  _truncatedError(model) {
+    const error = new Error(`${this.providerName} (${model}) stopped at the token limit before finishing the response`);
+    error.truncated = true;
+    return error;
+  }
+
   _extractContent(response) {
+    if (response?.choices?.[0]?.finish_reason === 'length') throw this._truncatedError(this.model);
     const content =
       response &&
       response.choices &&
