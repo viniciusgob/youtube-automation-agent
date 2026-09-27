@@ -12,8 +12,8 @@
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const MINI_LABELS = {
-    overview: 'Home', operator: 'Operator', pipeline: 'Pipeline',
-    calendar: 'Calendar', analytics: 'Stats', readiness: 'Checks', settings: 'Setup'
+    overview: 'Início', operator: 'Operador', pipeline: 'Pipeline',
+    calendar: 'Agenda', analytics: 'Análises', engagement: 'Engaj.', readiness: 'Prontidão', settings: 'Config.'
   };
   function ensureMiniLabels() {
     $$('.nav-item').forEach(item => {
@@ -30,13 +30,13 @@
 
   /* ---------- 1. View choreography ---------- */
   const VIEW_META = {
-    overview: ['OPERATOR OVERVIEW', 'Know what happens next.', 'Overview'],
-    operator: ['AUTONOMOUS OPERATOR', 'Give Lumen the strategy.', 'Operator'],
-    pipeline: ['CONTENT OPERATIONS', 'From idea to published.', 'Pipeline'],
-    calendar: ['EDITORIAL PLANNING', 'Plan before you generate.', 'Calendar'],
-    analytics: ['PERFORMANCE', 'Turn results into the next move.', 'Analytics'],
-    readiness: ['PRODUCTION READINESS', 'Verify before autonomy runs.', 'Readiness'],
-    settings: ['CHANNEL GUARDRAILS', 'Make every agent sound like you.', 'Setup']
+    overview: ['VISÃO GERAL DO OPERADOR', 'Saiba o que vem a seguir.', 'Visão geral'],
+    operator: ['OPERADOR AUTÔNOMO', 'Dê a estratégia ao Lumen.', 'Operador'],
+    pipeline: ['OPERAÇÕES DE CONTEÚDO', 'Da ideia à publicação.', 'Pipeline'],
+    calendar: ['PLANEJAMENTO EDITORIAL', 'Planeje antes de gerar.', 'Agenda'],
+    analytics: ['DESEMPENHO', 'Transforme resultados no próximo passo.', 'Análises'],
+    readiness: ['PRONTIDÃO DE PRODUÇÃO', 'Verifique antes de a autonomia rodar.', 'Prontidão'],
+    settings: ['DIRETRIZES DO CANAL', 'Faça cada agente soar como você.', 'Configuração']
   };
   let currentView = 'overview';
   const baseSwitchView = window.switchView;
@@ -70,9 +70,9 @@
   function countUp(el) {
     if (!el || reduceMotion) return;
     const raw = (el.textContent || '').trim();
-    const match = raw.match(/^(\d[\d,]*)(.*)$/);
+    const match = raw.match(/^(\d[\d,.]*)(.*)$/);
     if (!match) return;
-    const target = Number(match[1].replaceAll(',', ''));
+    const target = Number(match[1].replaceAll(/[,.]/g, ''));
     if (!Number.isFinite(target) || target === 0 || target > 100000) return;
     if (el.dataset.counted === String(target)) return;
     el.dataset.counted = String(target);
@@ -81,7 +81,7 @@
     const start = performance.now();
     function frame(now) {
       const t = Math.min(1, (now - start) / dur);
-      el.textContent = `${Math.round(target * easeOut(t)).toLocaleString()}${suffix}`;
+      el.textContent = `${Math.round(target * easeOut(t)).toLocaleString('pt-BR')}${suffix}`;
       if (t < 1) requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
@@ -109,14 +109,14 @@
   const palette = document.createElement('div');
   palette.className = 'cmdk-backdrop hidden';
   palette.innerHTML = `
-    <div class="cmdk" role="dialog" aria-modal="true" aria-label="Command palette">
+    <div class="cmdk" role="dialog" aria-modal="true" aria-label="Paleta de comandos">
       <div class="cmdk-head">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input class="cmdk-input" type="text" placeholder="Jump to a view, run a command…" aria-label="Command input" autocomplete="off" spellcheck="false">
+        <input class="cmdk-input" type="text" placeholder="Vá para uma tela, execute um comando…" aria-label="Entrada de comando" autocomplete="off" spellcheck="false">
         <kbd>esc</kbd>
       </div>
-      <div class="cmdk-list" role="listbox" aria-label="Commands"></div>
-      <div class="cmdk-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> run</span><span class="cmdk-brand">Lumen console</span></div>
+      <div class="cmdk-list" role="listbox" aria-label="Comandos"></div>
+      <div class="cmdk-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navegar</span><span><kbd>↵</kbd> executar</span><span class="cmdk-brand">Console Lumen</span></div>
     </div>`;
   document.body.appendChild(palette);
   const listEl = palette.querySelector('.cmdk-list');
@@ -124,22 +124,22 @@
 
   function buildCommands() {
     const cmds = Object.entries(VIEW_META).map(([id, meta]) => ({
-      group: 'Navigate', icon: 'view', label: meta[2] === 'Setup' ? 'Channel setup' : meta[2],
+      group: 'Navegar', icon: 'view', label: id === 'settings' ? 'Configuração do canal' : meta[2],
       hint: meta[1], keywords: id, run: () => window.switchView(id)
     }));
     const action = (label, hint, selector, keywords) => ({
-      group: 'Actions', icon: 'action', label, hint, keywords,
+      group: 'Ações', icon: 'action', label, hint, keywords,
       run: () => { const el = $(selector); if (el) el.click(); }
     });
     cmds.push(
-      action('Create video', 'Queue a new generation job', '#generate-button', 'generate new video create'),
-      action('Add backlog idea', 'Save a topic for later', '#add-idea-button', 'idea backlog topic'),
-      action('Run verified readiness check', 'Prove the production path', '#run-readiness-button', 'readiness verify dry run check'),
+      action('Criar vídeo', 'Enfileirar uma nova tarefa de geração', '#generate-button', 'generate new video create gerar novo criar'),
+      action('Adicionar ideia ao banco', 'Salvar um tema para depois', '#add-idea-button', 'idea backlog topic ideia tema'),
+      action('Executar verificação de prontidão', 'Comprovar o caminho de produção', '#run-readiness-button', 'readiness verify dry run check prontidão verificar simulação'),
       ui.state?.system?.automationPaused
-        ? action('Resume automation', 'Unpause the scheduler', '#automation-toggle', 'resume unpause automation play')
-        : action('Pause automation', 'Halt scheduled generation', '#automation-toggle', 'pause halt automation stop'),
-      action('Refresh dashboard data', 'Pull latest state now', '#refresh-button', 'refresh reload sync data'),
-      action('Set dashboard API key', 'Store access key in this browser', '#api-key-button', 'api key auth credentials')
+        ? action('Retomar automação', 'Despausar o agendador', '#automation-toggle', 'resume unpause automation play retomar automação')
+        : action('Pausar automação', 'Interromper a geração agendada', '#automation-toggle', 'pause halt automation stop pausar parar automação'),
+      action('Atualizar dados do painel', 'Buscar o estado mais recente agora', '#refresh-button', 'refresh reload sync data atualizar recarregar dados'),
+      action('Definir chave de API do painel', 'Armazenar a chave de acesso neste navegador', '#api-key-button', 'api key auth credentials chave credenciais')
     );
     return cmds;
   }
@@ -159,7 +159,7 @@
     filtered = q ? cmds.filter(c => `${c.label} ${c.hint} ${c.keywords}`.toLowerCase().includes(q)) : cmds;
     selected = Math.min(selected, Math.max(0, filtered.length - 1));
     if (!filtered.length) {
-      listEl.innerHTML = '<div class="cmdk-empty">No matching commands.</div>';
+      listEl.innerHTML = '<div class="cmdk-empty">Nenhum comando encontrado.</div>';
       return;
     }
     let lastGroup = '';
@@ -245,8 +245,8 @@
   // Visible trigger in the topbar
   const trigger = document.createElement('button');
   trigger.className = 'kbd-trigger';
-  trigger.setAttribute('aria-label', 'Open command palette');
-  trigger.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Search</span><kbd>Ctrl K</kbd>';
+  trigger.setAttribute('aria-label', 'Abrir paleta de comandos');
+  trigger.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Buscar</span><kbd>Ctrl K</kbd>';
   trigger.addEventListener('click', openPalette);
   $('.top-actions').prepend(trigger);
 
@@ -368,7 +368,7 @@
     footer.prepend(cluster);
     const clockLabel = cluster.querySelector('.console-clock span');
     const tickClock = () => {
-      clockLabel.textContent = new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      clockLabel.textContent = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     };
     tickClock();
     setInterval(tickClock, 15000);
