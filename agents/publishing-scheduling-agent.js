@@ -4,6 +4,7 @@ const fsSync = require('fs');
 const path = require('path');
 const { Logger } = require('../utils/logger');
 const { assertValidYouTubeMetadata } = require('../utils/youtube-metadata-validator');
+const { getContentLanguage, getContentLanguageName } = require('../utils/content-language');
 
 class PublishingSchedulingAgent {
   constructor(db, credentials) {
@@ -399,8 +400,8 @@ class PublishingSchedulingAgent {
         requestBody: {
           snippet: {
             videoId: videoId,
-            language: 'en',
-            name: 'English Captions',
+            language: getContentLanguage(),
+            name: `${getContentLanguageName()} Captions`,
             isDraft: false
           }
         },

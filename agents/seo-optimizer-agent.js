@@ -1,5 +1,6 @@
 const { Logger } = require('../utils/logger');
 const { AITextService } = require('../utils/ai-text-service');
+const { getContentLanguage } = require('../utils/content-language');
 
 class SEOOptimizerAgent {
   constructor(db, credentials) {
@@ -72,7 +73,7 @@ class SEOOptimizerAgent {
           primaryKeyword: strategy.keywords[0],
           secondaryKeywords: strategy.keywords.slice(1, 5),
           targetLength: this.calculateOptimalLength(strategy.contentType),
-          language: 'en',
+          language: getContentLanguage(),
           category: this.selectCategory(strategy)
         },
         createdAt: new Date().toISOString()

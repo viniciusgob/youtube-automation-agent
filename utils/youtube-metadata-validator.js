@@ -1,3 +1,5 @@
+const { getContentLanguage } = require('./content-language');
+
 const MAX_TITLE_LENGTH = 100;
 const MAX_DESCRIPTION_LENGTH = 5000;
 const MAX_TAGS_LENGTH = 450;
@@ -40,8 +42,8 @@ function normalizeYouTubeMetadata(metadata = {}) {
     description: removeControlCharacters(snippet.description).slice(0, MAX_DESCRIPTION_LENGTH).trim(),
     tags: normalizeTags(snippet.tags),
     categoryId: String(snippet.categoryId ?? snippet.metadata?.category ?? '22').trim(),
-    defaultLanguage: String(snippet.defaultLanguage ?? snippet.metadata?.language ?? 'en').trim(),
-    defaultAudioLanguage: String(snippet.defaultAudioLanguage ?? snippet.metadata?.language ?? 'en').trim()
+    defaultLanguage: String(snippet.defaultLanguage ?? snippet.metadata?.language ?? getContentLanguage()).trim(),
+    defaultAudioLanguage: String(snippet.defaultAudioLanguage ?? snippet.metadata?.language ?? getContentLanguage()).trim()
   };
 }
 

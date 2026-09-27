@@ -1,5 +1,6 @@
 const OpenAI = require('openai');
 const { Logger } = require('./logger');
+const { languageInstruction } = require('./content-language');
 
 const GEMINI_MODELS = [
   'gemini-3.7-flash',
@@ -101,6 +102,7 @@ class AITextService {
   }
 
   async generateText(prompt, options = {}) {
+    if (options.language !== false) prompt += languageInstruction();
     const model = options.model || this.model;
     const maxTokens = options.maxTokens || 2048;
     const temperature = options.temperature ?? 0.7;
