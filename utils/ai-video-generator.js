@@ -8,6 +8,7 @@ const { Logger } = require('./logger');
 const { runFFmpeg, checkFFmpeg, ffmpegInstallHint, getMediaDuration } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
 const { MuapiClient, resolveMuapiAuth } = require('./muapi-client');
+const { HiggsfieldClient, resolveHiggsfieldKey } = require('./higgsfield-client');
 
 class AIVideoGenerator {
   constructor(credentials, options = {}) {
@@ -52,6 +53,12 @@ class AIVideoGenerator {
     if (muapiClient.isConfigured()) {
       this.muapi = muapiClient;
       this.logger.info('MuAPI image service initialized');
+    }
+    // Higgsfield (Open Higgsfield platform key, id:secret) for Soul / Flux / Ideogram stills and thumbnails
+    const higgsfieldClient = new HiggsfieldClient({ apiKey: resolveHiggsfieldKey(resolvedCredentials) });
+    if (higgsfieldClient.isConfigured()) {
+      this.higgsfield = higgsfieldClient;
+      this.logger.info('Higgsfield image service initialized');
     }
     this.imageProvider = String(process.env.IMAGE_PROVIDER || 'auto').toLowerCase();
 
@@ -226,13 +233,13 @@ class AIVideoGenerator {
   }
 
   hasImageProvider() {
-    return Boolean(this.muapi || this.openai || this.gemini);
+    return Boolean(this.higgsfield || this.muapi || this.openai || this.gemini);
   }
 
-  // IMAGE_PROVIDER=auto tries MuAPI, then OpenAI, then Gemini; naming one provider pins it first.
+  // IMAGE_PROVIDER=auto tries Higgsfield, MuAPI, OpenAI, then Gemini; naming one provider pins it first.
   imageProviderOrder() {
-    const available = { muapi: this.muapi, openai: this.openai, gemini: this.gemini };
-    const order = ['muapi', 'openai', 'gemini'];
+    const available = { higgsfield: this.higgsfield, muapi: this.muapi, openai: this.openai, gemini: this.gemini };
+    const order = ['higgsfield', 'muapi', 'openai', 'gemini'];
     if (available[this.imageProvider]) order.unshift(this.imageProvider);
     return [...new Set(order)].filter(id => available[id]);
   }
@@ -245,7 +252,8 @@ class AIVideoGenerator {
     let lastError;
     for (const provider of order) {
       try {
-        if (provider === 'muapi') return await this.generateMuapiImage(prompt, imagePath);
+        if (provider === 'higgsfield') return await this.generateDownloadedImage(this.higgsfield, prompt, imagePath);
+        if (provider === 'muapi') return await this.generateDownloadedImage(this.muapi, prompt, imagePath);
         if (provider === 'openai') return await this.generateOpenAIImage(prompt, imagePath);
         return await this.generateGeminiImage(prompt, imagePath);
       } catch (error) {
@@ -256,9 +264,10 @@ class AIVideoGenerator {
     throw lastError;
   }
 
-  async generateMuapiImage(prompt, imagePath) {
+  // Higgsfield and MuAPI both return a CDN URL; the client downloads it and this converts it for the pipeline.
+  async generateDownloadedImage(client, prompt, imagePath) {
     const downloaded = `${imagePath}.download`;
-    await this.muapi.generateImage(prompt, downloaded, { aspectRatio: '16:9' });
+    await client.generateImage(prompt, downloaded, { aspectRatio: '16:9' });
     try {
       // Normalise whatever the CDN returned (webp/jpeg) into the extension the pipeline expects.
       const extension = path.extname(imagePath).toLowerCase();

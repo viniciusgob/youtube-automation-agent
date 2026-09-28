@@ -1038,8 +1038,9 @@ class SystemTest {
     const { MediaGenerationService } = require('./utils/media-generation-service');
     const {
       VideoProvider, VideoProviderRegistry, SeedanceProvider, MiniMaxH3Provider,
-      GoogleOmniProvider, KlingProvider, WanProvider, MuapiProvider
+      GoogleOmniProvider, KlingProvider, WanProvider, MuapiProvider, HiggsfieldProvider
     } = require('./utils/video-providers');
+    const higgsfieldClient = require('./utils/higgsfield-client');
     const muapiCatalog = require('./utils/muapi-client');
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-media-provider-'));
     const db = new Database();
@@ -1107,7 +1108,7 @@ class SystemTest {
         throw new Error('Provider task identity and model evidence did not persist');
       }
       const providers = registry.list();
-      for (const id of ['muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan', 'slideshow']) {
+      for (const id of ['higgsfield', 'muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan', 'slideshow']) {
         if (!providers.find(provider => provider.id === id)) throw new Error(`Missing video provider: ${id}`);
       }
       const shortOnly = new VideoProvider('wan', { model: 'wan-test', capabilities: { minDuration: 2, maxDuration: 15, firstFrame: true } });
@@ -1188,6 +1189,34 @@ class SystemTest {
       if (sample.status !== 'failed' || sample.outputUrl) throw new Error('MuAPI zero-balance sample asset was accepted as a generation');
       if (muapiCatalog.normalizeResult({ status: 'failed', error: 'boom' }).status !== 'failed') throw new Error('MuAPI failure was not normalized');
       if ([...muapiCatalog.MODELS.textToVideo.keys()].some(id => /spicy/i.test(id))) throw new Error('MuAPI catalog kept unfiltered models');
+
+      const higgsfieldCalls = [];
+      const higgsfield = new HiggsfieldProvider({}, { apiKey: 'key-id:key-secret', model: 'kling-3-std', http: {
+        request: async config => {
+          higgsfieldCalls.push(config);
+          return config.method === 'POST'
+            ? { status: 200, data: { request_id: 'hf-task', status: 'queued' } }
+            : { status: 200, data: { request_id: 'hf-task', status: 'completed', video: { url: 'https://cdn.example.com/clip.mp4' } } };
+        }
+      } });
+      const higgsfieldTask = await higgsfield.createTask({ prompt: 'Higgsfield scene', duration: 20, aspectRatio: '16:9', firstFrame: stillPath });
+      const higgsfieldStatus = await higgsfield.getTask(higgsfieldTask.externalTaskId, { taskType: higgsfieldTask.taskType });
+      if (higgsfieldTask.externalTaskId !== 'hf-task' || higgsfieldCalls[0].url !== 'https://api.higgsfield.ai/kling-video/v3.0/std/text-to-video' ||
+        higgsfieldCalls[0].headers.Authorization !== 'Key key-id:key-secret' || higgsfieldCalls[0].data.duration !== 15 || higgsfieldCalls[0].data.image_url) {
+        throw new Error('Higgsfield adapter did not submit the expected Kling 3 text-to-video request');
+      }
+      if (higgsfieldStatus.status !== 'succeeded' || higgsfieldStatus.outputUrl !== 'https://cdn.example.com/clip.mp4' || !higgsfieldCalls[1].url.endsWith('/requests/hf-task/status')) {
+        throw new Error('Higgsfield status was not normalized for polling');
+      }
+      if (new HiggsfieldProvider({}, { apiKey: 'missing-secret' }).isAvailable()) throw new Error('Higgsfield accepted a key without id:secret');
+      const seedanceImage = higgsfieldClient.mapVideoRequest('seedance-2.5', { prompt: 'p', duration: 8, start: 'https://cdn.example.com/still.png' });
+      if (seedanceImage.path !== 'bytedance/seedance-2.5/image-to-video' || seedanceImage.body.image_url !== 'https://cdn.example.com/still.png') {
+        throw new Error('Higgsfield Seedance start frame was not mapped to image-to-video');
+      }
+      if (higgsfieldClient.normalizeStatus({ status: 'nsfw' }).status !== 'failed') throw new Error('Higgsfield NSFW status was not treated as a failure');
+      const unfunded = new higgsfieldClient.HiggsfieldClient({ apiKey: 'a:b', http: { request: async () => ({ status: 403, data: { detail: 'not_enough_credits' } }) } });
+      const creditsError = await unfunded.submit('kling-video/v3.0/std/text-to-video', { prompt: 'p' }).catch(error => error);
+      if (creditsError.status !== 403 || !/not enough credits/i.test(creditsError.message)) throw new Error('Higgsfield out-of-credits error was not surfaced');
 
       let minimaxBody;
       const minimax = new MiniMaxH3Provider({}, { apiKey: 'test', http: {
@@ -2881,7 +2910,7 @@ class SystemTest {
       }
     }
 
-    for (const id of ['slideshow', 'muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan']) {
+    for (const id of ['slideshow', 'higgsfield', 'muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan']) {
       const guide = VIDEO_PROVIDER_GUIDE[id];
       if (!guide?.label) throw new Error(`Walkthrough is missing video provider "${id}"`);
       if (id !== 'slideshow') {

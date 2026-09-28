@@ -4,10 +4,11 @@ const path = require('path');
 const axios = require('axios');
 const Replicate = require('replicate');
 const muapi = require('./muapi-client');
+const higgsfield = require('./higgsfield-client');
 
-const DEFAULT_PROVIDER_ORDER = ['muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan', 'slideshow'];
+const DEFAULT_PROVIDER_ORDER = ['higgsfield', 'muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan', 'slideshow'];
 // Every value accepted for video_provider: a concrete provider, or `auto` for capability routing.
-const VIDEO_PROVIDER_IDS = ['slideshow', 'auto', 'muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'];
+const VIDEO_PROVIDER_IDS = ['slideshow', 'auto', 'higgsfield', 'muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'];
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value)));
 
@@ -454,6 +455,44 @@ class MuapiProvider extends VideoProvider {
   }
 }
 
+// Higgsfield platform (the Open Higgsfield studio's backend): one id:secret key for Kling 3, Seedance, Wan, MiniMax…
+class HiggsfieldProvider extends VideoProvider {
+  constructor(credentials, options = {}) {
+    const requested = options.model || process.env.HIGGSFIELD_VIDEO_MODEL || higgsfield.DEFAULT_VIDEO_MODEL;
+    const modelId = higgsfield.VIDEO_MODELS[requested] ? requested : higgsfield.DEFAULT_VIDEO_MODEL;
+    const spec = higgsfield.VIDEO_MODELS[modelId];
+    const inlineMedia = options.inlineMedia ?? process.env.HIGGSFIELD_INLINE_MEDIA === 'true';
+    super('higgsfield', {
+      model: modelId,
+      capabilities: {
+        minDuration: spec.minDuration, maxDuration: spec.maxDuration, defaultResolution: spec.resolutions[0],
+        maxPromptLength: 2000, text: true,
+        // Scene stills are local files; they can only be sent as start frames when inline media is enabled.
+        firstFrame: inlineMedia, lastFrame: inlineMedia && Boolean(spec.lastFrame),
+        nativeAudio: spec.nativeAudio
+      }
+    });
+    this.inlineMedia = inlineMedia;
+    this.client = options.client || new higgsfield.HiggsfieldClient({ apiKey: options.apiKey || higgsfield.resolveHiggsfieldKey(credentials), baseUrl: options.baseUrl, http: options.http });
+  }
+
+  isAvailable() { return this.client.isConfigured(); }
+
+  async createTask(input) {
+    const request = this.normalizeRequest(input);
+    const start = await higgsfield.toMediaUrl(request.firstFrame, this.inlineMedia);
+    const end = start ? await higgsfield.toMediaUrl(request.lastFrame, this.inlineMedia) : null;
+    const { path: modelPath, body } = higgsfield.mapVideoRequest(this.model, { ...request, start, end });
+    const queued = await this.client.submit(modelPath, body);
+    return { externalTaskId: queued.requestId, status: 'queued', outputUrl: null, error: null, model: this.model, taskType: modelPath };
+  }
+
+  async getTask(id, context = {}) {
+    const result = await this.client.status(id);
+    return { ...result, externalTaskId: id, model: this.model, taskType: context.taskType || null };
+  }
+}
+
 class SlideshowProvider extends VideoProvider {
   constructor() {
     super('slideshow', { model: 'local-ffmpeg', capabilities: { local: true, text: true, maxDuration: Infinity } });
@@ -465,6 +504,7 @@ class VideoProviderRegistry {
   constructor(credentials = {}, options = {}) {
     const injected = options.providers || {};
     this.providers = new Map([
+      ['higgsfield', injected.higgsfield || new HiggsfieldProvider(credentials, options.higgsfield)],
       ['muapi', injected.muapi || new MuapiProvider(credentials, options.muapi)],
       ['seedance', injected.seedance || new SeedanceProvider(credentials, options.seedance)],
       ['minimax_h3', injected.minimax_h3 || new MiniMaxH3Provider(credentials, options.minimax_h3)],
@@ -502,6 +542,7 @@ module.exports = {
   KlingProvider,
   WanProvider,
   MuapiProvider,
+  HiggsfieldProvider,
   SlideshowProvider,
   safeModelError
 };

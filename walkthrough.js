@@ -115,6 +115,13 @@ const VIDEO_PROVIDER_GUIDE = {
     keyUrl: null,
     covers: 'local FFmpeg assembly using generated stills and narration'
   },
+  higgsfield: {
+    label: 'Higgsfield — one key for Kling 3, Seedance, Wan, MiniMax video and Soul images',
+    keyUrl: 'https://cloud.higgsfield.ai',
+    credentialName: 'Higgsfield key ID',
+    secretName: 'Higgsfield key secret',
+    save(credentials, value, secret) { credentials.higgsfield = { apiKey: secret ? `${value}:${secret}` : value }; }
+  },
   muapi: {
     label: 'MuAPI (Open Generative AI) — one key for Seedance 2.5, Kling 3, Veo 3.1, Wan and image models',
     keyUrl: 'https://muapi.ai',
