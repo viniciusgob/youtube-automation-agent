@@ -678,8 +678,8 @@ class Database {
       ['channel_timezone', 'America/Chicago', 'Timezone used to present channel schedules'],
       ['max_daily_posts', '1', 'Maximum posts per day'],
       ['content_buffer_days', '3', 'Days of content to keep in buffer'],
-      ['video_provider', 'slideshow', 'Video provider: slideshow, auto, seedance, minimax_h3, google_omni, kling, or wan'],
-      ['video_provider_order', 'seedance,minimax_h3,google_omni,kling,wan,slideshow', 'Provider priority used by automatic routing'],
+      ['video_provider', 'slideshow', 'Video provider: slideshow, auto, muapi, seedance, minimax_h3, google_omni, kling, or wan'],
+      ['video_provider_order', 'muapi,seedance,minimax_h3,google_omni,kling,wan,slideshow', 'Provider priority used by automatic routing'],
       ['video_generation_mode', 'hybrid', 'Use provider clips within a locally assembled long-form video'],
       ['video_clip_duration', '8', 'Requested duration for each generated provider clip'],
       ['video_max_generated_seconds', '60', 'Maximum paid provider seconds per production'],
@@ -963,6 +963,7 @@ class Database {
     const id = this.generateId('job');
     const details = {
       strategyContext: input.strategyContext || {},
+      ...(input.videoProvider ? { videoProvider: input.videoProvider } : {}),
       resumeCount: 0,
       reusedStages: []
     };

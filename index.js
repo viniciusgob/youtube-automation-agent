@@ -27,6 +27,7 @@ const { AudienceEngagementService } = require('./utils/audience-engagement-servi
 const { GrowthExperimentService } = require('./utils/growth-experiment-service');
 const { AITextService } = require('./utils/ai-text-service');
 const { DiscoverabilityService } = require('./utils/discoverability-service');
+const { VIDEO_PROVIDER_IDS } = require('./utils/video-providers');
 const { version } = require('./package.json');
 const chalk = require('chalk');
 
@@ -235,7 +236,8 @@ class YouTubeAutomationAgent {
       topic: null,
       style: null,
       length: typeof body.length === 'string' ? body.length.toLowerCase() : 'medium',
-      strategyContext: null
+      strategyContext: null,
+      videoProvider: null
     };
 
     // JSON has no `undefined`, so clients send `null` to mean "no value provided".
@@ -281,6 +283,14 @@ class YouTubeAutomationAgent {
 
     if (!['short', 'medium', 'long'].includes(value.length)) {
       return { valid: false, status: 400, error: 'length must be short, medium, or long' };
+    }
+
+    // Per-job override of the channel's video provider; empty means "use the channel default".
+    if (body.videoProvider !== undefined && body.videoProvider !== null && body.videoProvider !== '') {
+      if (typeof body.videoProvider !== 'string' || !VIDEO_PROVIDER_IDS.includes(body.videoProvider)) {
+        return { valid: false, status: 400, error: 'Unsupported video provider' };
+      }
+      value.videoProvider = body.videoProvider;
     }
 
     if (body.strategyContext !== undefined && body.strategyContext !== null) {
@@ -525,7 +535,8 @@ class YouTubeAutomationAgent {
             automationPaused: this.scheduler ? !this.scheduler.isEnabled : true,
             agents: Object.keys(this.agents),
             autonomousRunning: Boolean(await this.db.getActiveOperatorRun()),
-            videoProviders: this.agents.production?.aiVideoGenerator?.mediaGeneration?.listProviders() || []
+            videoProviders: this.agents.production?.aiVideoGenerator?.mediaGeneration?.listProviders() || [],
+            defaultVideoProvider: process.env.VIDEO_PROVIDER || settings?.video_provider || 'slideshow'
           }
         });
       } catch (error) {
@@ -1238,8 +1249,7 @@ class YouTubeAutomationAgent {
       }
       const provider = req.body?.video_provider;
       if (provider !== undefined) {
-        const supported = ['slideshow', 'auto', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'];
-        if (!supported.includes(provider)) return res.status(400).json({ error: 'Unsupported video provider' });
+        if (!VIDEO_PROVIDER_IDS.includes(provider)) return res.status(400).json({ error: 'Unsupported video provider' });
         await this.db.setSetting('video_provider', provider);
       }
       const mode = req.body?.video_generation_mode;
@@ -1345,7 +1355,8 @@ class YouTubeAutomationAgent {
       topic: job.topic,
       style: job.style,
       length: job.length || 'medium',
-      strategyContext: job.details?.strategyContext || {}
+      strategyContext: job.details?.strategyContext || {},
+      videoProvider: job.details?.videoProvider || null
     };
     const updated = await this.db.updateGenerationJob(job.id, {
       status: 'queued',

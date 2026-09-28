@@ -58,5 +58,9 @@ module.exports = [
         caughtErrors: 'none'
       }]
     }
+  },
+  {
+    files: ['**/*.mjs'],
+    languageOptions: { sourceType: 'module' }
   }
 ];

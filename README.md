@@ -262,6 +262,7 @@ Local slideshow rendering remains the default, so upgrading does not start paid 
 
 | Provider | Default model | Best fit | Clip limits |
 | --- | --- | --- | --- |
+| MuAPI (Open Generative AI) | `seedance-2.5-text-to-video` + `seedance-2.5-image-to-video` (any id from `utils/muapi-models.json`: Kling 3, Veo 3.1, Wan, Hailuo…) | One key for many video models; scene stills are uploaded as start frames; also Nano Banana/Flux/GPT Image stills | Per model |
 | ByteDance | `bytedance/seedance-2.5` through Replicate | Cinematic long scenes and large reference sets | 4–30 seconds |
 | MiniMax | `MiniMax-H3` | Multimodal references, native stereo audio, optional 2K | 4–15 seconds |
 | Google | `gemini-omni-flash-preview` | Fast generation and conversational editing | 3–10 seconds |
@@ -320,9 +321,10 @@ OPENAI_API_KEY=sk-...
 # ELEVENLABS_VOICE_ID=...
 
 # Optional: AI video generation
-# VIDEO_PROVIDER=slideshow # auto, seedance, minimax_h3, google_omni, kling, wan
+# VIDEO_PROVIDER=slideshow # auto, muapi, seedance, minimax_h3, google_omni, kling, wan
 # VIDEO_GENERATION_MODE=hybrid
 # VIDEO_MAX_GENERATED_SECONDS=60
+# MUAPI_API_KEY=...        # MuAPI video + images
 # REPLICATE_API_TOKEN=...  # Seedance 2.5
 # MINIMAX_API_KEY=...      # MiniMax H3
 # KLING_ACCESS_KEY=...

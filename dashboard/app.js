@@ -339,6 +339,7 @@ function renderJobs(jobs) {
         <div class="meta-line">${statusChip(job.status)} · ${escapeHTML(label(job.stage))} · ${timeAgo(job.updated_at)}</div>
         ${checkpoints.length ? `<div class="checkpoint-line">${completed.size}/${stages.length} etapas salvas${job.details?.reusedStages?.length ? ` · ${job.details.reusedStages.length} reaproveitada${job.details.reusedStages.length === 1 ? '' : 's'}` : ''}</div>` : ''}
         ${mediaTasks.length ? `<div class="checkpoint-line">Vídeo: ${mediaCompleted}/${mediaTasks.length} clipes prontos · ${escapeHTML(mediaProviders)}</div>` : ''}
+        ${job.details?.videoProvider && !mediaTasks.length ? `<div class="checkpoint-line">Provedor de vídeo: ${escapeHTML((videoProviderLabels()[job.details.videoProvider] || job.details.videoProvider).split(' · ')[0])}</div>` : ''}
         <div class="progress"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
       </div>
       ${['queued', 'running'].includes(job.status) ? `<button class="text-button" data-cancel-job="${escapeHTML(job.id)}">Cancelar</button>` : ''}
@@ -1949,7 +1950,49 @@ document.addEventListener('change', event => {
   }
 });
 
-$('#generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
+// Provider names come from the channel-setup select so both pickers stay worded the same.
+function videoProviderLabels() {
+  return Object.fromEntries([...document.querySelectorAll('select[name="videoProvider"]:not(#generate-video-provider) option')]
+    .map(option => [option.value, option.textContent]));
+}
+
+// Fills the per-job provider picker from the live provider list.
+function populateGenerateProviders() {
+  const select = $('#generate-video-provider');
+  if (!select) return;
+  const providers = ui.state?.system?.videoProviders || [];
+  const labels = videoProviderLabels();
+  const channelDefault = ui.state?.system?.defaultVideoProvider || ui.state?.settings?.video_provider || 'slideshow';
+  const previous = select.value;
+  const option = (value, text, disabled = false) => `<option value="${escapeHTML(value)}"${disabled ? ' disabled' : ''}>${escapeHTML(text)}</option>`;
+  const paid = providers.filter(provider => provider.id !== 'slideshow');
+  select.innerHTML = [
+    option('', `Padrão do canal · ${labels[channelDefault] || channelDefault}`),
+    option('slideshow', labels.slideshow || 'Apresentação de slides local'),
+    option('auto', labels.auto || 'Roteamento automático por capacidade'),
+    ...paid.map(provider => option(provider.id, `${labels[provider.id] || provider.id}${provider.available ? '' : ' · sem credencial'}`, !provider.available))
+  ].join('');
+  select.value = [...select.options].some(item => item.value === previous && !item.disabled) ? previous : '';
+  describeGenerateProvider();
+}
+
+function describeGenerateProvider() {
+  const select = $('#generate-video-provider');
+  const status = $('#generate-video-provider-status');
+  if (!select || !status) return;
+  const chosen = select.value || ui.state?.system?.defaultVideoProvider || ui.state?.settings?.video_provider || 'slideshow';
+  const provider = (ui.state?.system?.videoProviders || []).find(item => item.id === chosen);
+  status.textContent = chosen === 'slideshow' ? 'Sem custo: imagens e narração montadas localmente.'
+    : chosen === 'auto' ? 'Usa o primeiro provedor pago configurado que atende a cena; o slideshow é a alternativa final.'
+      : provider?.available ? `Gera clipes com ${provider.model}. Consome créditos do provedor; se falhar, o vídeo usa o slideshow.`
+        : 'Este provedor não tem credencial configurada; o vídeo usará o slideshow.';
+}
+
+$('#generate-video-provider')?.addEventListener('change', describeGenerateProvider);
+$('#generate-button').addEventListener('click', () => {
+  populateGenerateProviders();
+  $('#generate-dialog').showModal();
+});
 $('#add-idea-button').addEventListener('click', () => $('#idea-dialog').showModal());
 $('#refresh-button').addEventListener('click', () => refreshDashboard());
 $('#pipeline-filter').addEventListener('change', () => renderPipeline(ui.state?.pipeline || []));

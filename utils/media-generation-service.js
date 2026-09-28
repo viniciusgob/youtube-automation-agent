@@ -16,9 +16,11 @@ class MediaGenerationService {
     this.sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
   }
 
-  async settings() {
+  // A provider chosen for one job (dashboard "Criar vídeo") wins over the env var and the channel setting.
+  async settings(jobId = null) {
     const stored = this.db?.getAllSettings ? await this.db.getAllSettings() : {};
-    const provider = process.env.VIDEO_PROVIDER || stored.video_provider || 'slideshow';
+    const job = jobId && this.db?.getGenerationJob ? await this.db.getGenerationJob(jobId).catch(() => null) : null;
+    const provider = job?.details?.videoProvider || process.env.VIDEO_PROVIDER || stored.video_provider || 'slideshow';
     const order = String(process.env.VIDEO_PROVIDER_ORDER || stored.video_provider_order || DEFAULT_PROVIDER_ORDER.join(','))
       .split(',').map(value => value.trim()).filter(Boolean);
     return {
@@ -68,7 +70,7 @@ class MediaGenerationService {
   }
 
   async generateClips({ jobId, productionId, script, visualAssets = [], outputDir }) {
-    const settings = await this.settings();
+    const settings = await this.settings(jobId);
     const routingRequest = {
       duration: settings.clipDuration,
       firstFrame: visualAssets[0] || null,

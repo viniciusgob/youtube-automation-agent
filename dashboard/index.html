@@ -276,7 +276,7 @@
             <label class="toggle"><input id="notifications-enabled" type="checkbox"><span></span> Salvar notificações do operador</label>
           </div>
           <div class="form-grid video-provider-settings">
-            <label><span>Provedor de vídeo</span><select name="videoProvider"><option value="slideshow">Apresentação de slides local · sem custo de provedor</option><option value="auto">Roteamento automático por capacidade</option><option value="seedance">ByteDance Seedance 2.5</option><option value="minimax_h3">MiniMax H3</option><option value="google_omni">Google Gemini Omni Flash</option><option value="kling">Kuaishou Kling 3.0 Omni</option><option value="wan">Alibaba Wan 2.7</option></select><small id="video-provider-status">As credenciais do provedor são verificadas durante a execução.</small></label>
+            <label><span>Provedor de vídeo</span><select name="videoProvider"><option value="slideshow">Apresentação de slides local · sem custo de provedor</option><option value="auto">Roteamento automático por capacidade</option><option value="muapi">MuAPI · Open Generative AI (Seedance 2.5, Kling 3, Veo 3.1, Wan…)</option><option value="seedance">ByteDance Seedance 2.5</option><option value="minimax_h3">MiniMax H3</option><option value="google_omni">Google Gemini Omni Flash</option><option value="kling">Kuaishou Kling 3.0 Omni</option><option value="wan">Alibaba Wan 2.7</option></select><small id="video-provider-status">As credenciais do provedor são verificadas durante a execução.</small></label>
             <label><span>Modo de geração</span><select name="videoGenerationMode"><option value="hybrid">Híbrido · clipes gerados + montagem local</option><option value="slideshow">Somente apresentação de slides local</option></select></label>
             <label><span>Duração do clipe</span><input name="videoClipDuration" type="number" min="3" max="30" step="1"></label>
             <label><span>Limite de segundos pagos</span><input name="videoMaxGeneratedSeconds" type="number" min="0" max="600" step="1"><small>Máximo de segundos gerados pelo provedor por produção.</small></label>
@@ -295,6 +295,7 @@
         <label><span>Formato</span><select name="style"><option value="explainer">Explicativo</option><option value="tutorial">Tutorial</option><option value="list">Lista</option><option value="review">Análise</option><option value="story">História</option></select></label>
         <label><span>Duração</span><select name="length"><option value="short">Curto · 2–4 min</option><option value="medium" selected>Médio · 8–12 min</option><option value="long">Longo · 15–20 min</option></select></label>
       </div>
+      <label><span>Provedor de vídeo <small>só para este vídeo</small></span><select name="videoProvider" id="generate-video-provider"><option value="">Padrão do canal</option></select><small id="generate-video-provider-status"></small></label>
       <p class="callout">A geração ocorre em segundo plano. Você pode acompanhar cada etapa e cancelar entre elas.</p>
       <div class="form-actions"><button type="submit" class="button primary">Iniciar geração</button><button type="button" class="button ghost" data-close>Cancelar</button></div>
     </form>

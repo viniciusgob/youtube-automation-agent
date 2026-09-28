@@ -1038,8 +1038,9 @@ class SystemTest {
     const { MediaGenerationService } = require('./utils/media-generation-service');
     const {
       VideoProvider, VideoProviderRegistry, SeedanceProvider, MiniMaxH3Provider,
-      GoogleOmniProvider, KlingProvider, WanProvider
+      GoogleOmniProvider, KlingProvider, WanProvider, MuapiProvider
     } = require('./utils/video-providers');
+    const muapiCatalog = require('./utils/muapi-client');
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-media-provider-'));
     const db = new Database();
     db.dbPath = path.join(directory, 'media.db');
@@ -1074,6 +1075,19 @@ class SystemTest {
       };
       const registry = new VideoProviderRegistry({}, { providers: { seedance: fake } });
       const service = new MediaGenerationService(db, {}, { registry, pollIntervalMs: 10, sleep: async () => {} });
+      const previousProvider = process.env.VIDEO_PROVIDER;
+      process.env.VIDEO_PROVIDER = 'slideshow';
+      try {
+        const pickedJob = await db.createGenerationJob({ topic: 'Per-job provider', videoProvider: 'kling' });
+        const resumedJob = await db.getGenerationJob(pickedJob.id);
+        if ((await service.settings(pickedJob.id)).provider !== 'kling' || resumedJob.details.videoProvider !== 'kling' ||
+          (await service.settings(job.id)).provider !== 'slideshow') {
+          throw new Error('The provider picked for one job did not override the channel default for that job only');
+        }
+      } finally {
+        if (previousProvider === undefined) delete process.env.VIDEO_PROVIDER;
+        else process.env.VIDEO_PROVIDER = previousProvider;
+      }
       const output = path.join(directory, 'output.mp4');
       const input = {
         jobId: job.id,
@@ -1093,7 +1107,7 @@ class SystemTest {
         throw new Error('Provider task identity and model evidence did not persist');
       }
       const providers = registry.list();
-      for (const id of ['seedance', 'minimax_h3', 'google_omni', 'kling', 'wan', 'slideshow']) {
+      for (const id of ['muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan', 'slideshow']) {
         if (!providers.find(provider => provider.id === id)) throw new Error(`Missing video provider: ${id}`);
       }
       const shortOnly = new VideoProvider('wan', { model: 'wan-test', capabilities: { minDuration: 2, maxDuration: 15, firstFrame: true } });
@@ -1123,6 +1137,57 @@ class SystemTest {
       }
       const fileOutput = seedance.normalizeTask({ id: 'file-output', status: 'succeeded', output: { url: () => new URL('https://example.com/video.mp4') } });
       if (fileOutput.outputUrl !== 'https://example.com/video.mp4') throw new Error('Seedance FileOutput was not normalized');
+
+      const stillPath = path.join(directory, 'scene-still.png');
+      await fs.writeFile(stillPath, Buffer.from('fake-png'));
+      const muapiCalls = [];
+      const muapi = new MuapiProvider({}, { apiKey: 'muapi-test', http: {
+        request: async config => {
+          muapiCalls.push(config);
+          if (config.url.endsWith('/upload_file')) return { status: 200, data: { url: 'https://cdn.muapi.ai/scene-still.png' } };
+          if (config.method === 'POST') return { status: 200, data: { request_id: `mu-${muapiCalls.length}` } };
+          return { status: 200, data: { status: 'completed', outputs: ['https://cdn.muapi.ai/clip.mp4'] } };
+        }
+      } });
+      const muapiText = await muapi.createTask({ prompt: 'MuAPI scene', duration: 40, aspectRatio: '16:9' });
+      const muapiImage = await muapi.createTask({ prompt: 'MuAPI still scene', duration: 8, aspectRatio: '16:9', firstFrame: stillPath });
+      const muapiStatus = await muapi.getTask(muapiImage.externalTaskId, { taskType: muapiImage.taskType, model: muapiImage.model });
+      const [textSubmit, upload, imageSubmit, poll] = muapiCalls;
+      if (textSubmit.url !== 'https://api.muapi.ai/api/v1/seedance-2.5-text-to-video' || textSubmit.headers['x-api-key'] !== 'muapi-test' ||
+        textSubmit.data.duration !== 30 || textSubmit.data.aspect_ratio !== '16:9' || muapiText.externalTaskId !== 'mu-1') {
+        throw new Error('MuAPI adapter did not submit the expected Seedance 2.5 text-to-video request');
+      }
+      if (!upload.url.endsWith('/api/v1/upload_file') || !imageSubmit.url.endsWith('/api/v1/seedance-2.5-image-to-video') ||
+        imageSubmit.data.image_url !== 'https://cdn.muapi.ai/scene-still.png' || muapiImage.model !== 'seedance-2.5-image-to-video') {
+        throw new Error('MuAPI adapter did not upload the scene still and use image-to-video');
+      }
+      if (!poll.url.endsWith('/api/v1/predictions/mu-3/result') || muapiStatus.status !== 'succeeded' || muapiStatus.outputUrl !== 'https://cdn.muapi.ai/clip.mp4') {
+        throw new Error('MuAPI prediction result was not normalized for polling');
+      }
+      if (new MuapiProvider({}, {}).isAvailable() && !process.env.MUAPI_API_KEY) throw new Error('MuAPI reported available without a key');
+      const veo = muapiCatalog.buildPayload(muapiCatalog.MODELS.imageToVideo.get('veo3-image-to-video'), { prompt: 'p', imageUrl: 'https://x/y.png' });
+      if (!Array.isArray(veo.images_list) || veo.images_list[0] !== 'https://x/y.png') throw new Error('MuAPI list image fields were not wrapped');
+      const lora = muapiCatalog.buildPayload(muapiCatalog.MODELS.textToImage.get('flux-dev-lora'), { prompt: 'p' });
+      if (!(lora.width > lora.height) || lora.width % 64 || !muapiCatalog.MODELS.textToImage.get('midjourney-v7-text-to-image')) {
+        throw new Error('MuAPI catalog lost the 2.0.0 models or their 16:9 sizing');
+      }
+      const oauthCalls = [];
+      const oauthClient = new muapiCatalog.MuapiClient({ oauth: { clientId: 'oc_test', clientSecret: 'ocs_test' }, http: {
+        request: async config => {
+          oauthCalls.push(config);
+          if (config.url.endsWith('/oauth/token')) return { status: 200, data: { access_token: `tok-${oauthCalls.length}`, expires_in: 3600 } };
+          return { status: 200, data: { balance: 5, currency: 'USD' } };
+        }
+      } });
+      await oauthClient.balance();
+      await oauthClient.balance();
+      if (oauthCalls.length !== 3 || !oauthCalls[0].data.includes('grant_type=client_credentials') || oauthCalls[2].headers.Authorization !== 'Bearer tok-1') {
+        throw new Error('MuAPI OAuth token was not exchanged once and reused as a Bearer token');
+      }
+      const sample = muapiCatalog.normalizeResult({ status: 'completed', outputs: ['https://d3adwkbyhxyrtq.cloudfront.net/webassets/videomodels/nano-banana-2.jpg'], cost: { amount_usd: 0 } });
+      if (sample.status !== 'failed' || sample.outputUrl) throw new Error('MuAPI zero-balance sample asset was accepted as a generation');
+      if (muapiCatalog.normalizeResult({ status: 'failed', error: 'boom' }).status !== 'failed') throw new Error('MuAPI failure was not normalized');
+      if ([...muapiCatalog.MODELS.textToVideo.keys()].some(id => /spicy/i.test(id))) throw new Error('MuAPI catalog kept unfiltered models');
 
       let minimaxBody;
       const minimax = new MiniMaxH3Provider({}, { apiKey: 'test', http: {
@@ -2152,6 +2217,13 @@ class SystemTest {
       throw new Error('Overlong style was not rejected');
     }
 
+    const pickedProvider = agent.validateGenerateRequestBody({ videoProvider: 'google_omni' });
+    const defaultProvider = agent.validateGenerateRequestBody({ videoProvider: '' });
+    const unknownProvider = agent.validateGenerateRequestBody({ videoProvider: 'sora-hack' });
+    if (pickedProvider.value?.videoProvider !== 'google_omni' || defaultProvider.value?.videoProvider !== null || unknownProvider.valid) {
+      throw new Error('Per-job video provider was not validated');
+    }
+
     const previousKey = process.env.API_KEY;
     process.env.API_KEY = 'test-secret';
     const middleware = agent.requireAPIKey();
@@ -2809,7 +2881,7 @@ class SystemTest {
       }
     }
 
-    for (const id of ['slideshow', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan']) {
+    for (const id of ['slideshow', 'muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan']) {
       const guide = VIDEO_PROVIDER_GUIDE[id];
       if (!guide?.label) throw new Error(`Walkthrough is missing video provider "${id}"`);
       if (id !== 'slideshow') {

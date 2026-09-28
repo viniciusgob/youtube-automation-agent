@@ -3,8 +3,11 @@ const fs = require('fs').promises;
 const path = require('path');
 const axios = require('axios');
 const Replicate = require('replicate');
+const muapi = require('./muapi-client');
 
-const DEFAULT_PROVIDER_ORDER = ['seedance', 'minimax_h3', 'google_omni', 'kling', 'wan', 'slideshow'];
+const DEFAULT_PROVIDER_ORDER = ['muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan', 'slideshow'];
+// Every value accepted for video_provider: a concrete provider, or `auto` for capability routing.
+const VIDEO_PROVIDER_IDS = ['slideshow', 'auto', 'muapi', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan'];
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, Number(value)));
 
@@ -409,6 +412,48 @@ class WanProvider extends VideoProvider {
   }
 }
 
+// MuAPI (the Open Generative AI studio's backend): one key for Seedance 2.5, Kling 3, Veo 3.1, Wan, Hailuo, etc.
+// Scene stills are uploaded to MuAPI and sent to the image-to-video model as the start frame.
+class MuapiProvider extends VideoProvider {
+  constructor(credentials, options = {}) {
+    const textModel = muapi.MODELS.textToVideo.get(options.model || process.env.MUAPI_VIDEO_MODEL || muapi.DEFAULT_VIDEO_MODEL)
+      || muapi.MODELS.textToVideo.get(muapi.DEFAULT_VIDEO_MODEL);
+    const i2vId = options.imageModel ?? process.env.MUAPI_I2V_MODEL ?? muapi.DEFAULT_I2V_MODEL;
+    const imageModel = i2vId && i2vId !== 'none' ? muapi.MODELS.imageToVideo.get(i2vId) || null : null;
+    const range = muapi.durationRange(textModel);
+    super('muapi', {
+      model: textModel.id,
+      capabilities: {
+        minDuration: range.min, maxDuration: range.max, defaultResolution: '720p', maxPromptLength: 2000,
+        text: true, firstFrame: Boolean(imageModel), lastFrame: Boolean(imageModel?.lastImageField),
+        nativeAudio: Boolean(textModel.inputs?.generate_audio), imageToVideoModel: imageModel?.id || null
+      }
+    });
+    this.textModel = textModel;
+    this.imageModel = imageModel;
+    this.client = options.client || new muapi.MuapiClient({ ...muapi.resolveMuapiAuth(credentials), ...(options.apiKey ? { apiKey: options.apiKey } : {}), baseUrl: options.baseUrl, http: options.http });
+  }
+
+  isAvailable() { return this.client.isConfigured(); }
+
+  async createTask(input) {
+    const request = this.normalizeRequest(input);
+    const useImage = Boolean(this.imageModel && request.firstFrame);
+    const model = useImage ? this.imageModel : this.textModel;
+    const imageUrl = useImage ? await this.client.uploadFile(request.firstFrame) : null;
+    const lastImageUrl = useImage && request.lastFrame && model.lastImageField ? await this.client.uploadFile(request.lastFrame) : null;
+    const payload = muapi.buildPayload(model, { ...request, imageUrl, lastImageUrl });
+    const submitted = await this.client.submit(model.endpoint, payload);
+    if (submitted.immediate) return { ...submitted.immediate, model: model.id, taskType: model.endpoint };
+    return { externalTaskId: submitted.requestId, status: 'queued', outputUrl: null, error: null, model: model.id, taskType: model.endpoint };
+  }
+
+  async getTask(id, context = {}) {
+    const result = await this.client.result(id);
+    return { ...result, externalTaskId: id, model: context.model || this.model, taskType: context.taskType || null };
+  }
+}
+
 class SlideshowProvider extends VideoProvider {
   constructor() {
     super('slideshow', { model: 'local-ffmpeg', capabilities: { local: true, text: true, maxDuration: Infinity } });
@@ -420,6 +465,7 @@ class VideoProviderRegistry {
   constructor(credentials = {}, options = {}) {
     const injected = options.providers || {};
     this.providers = new Map([
+      ['muapi', injected.muapi || new MuapiProvider(credentials, options.muapi)],
       ['seedance', injected.seedance || new SeedanceProvider(credentials, options.seedance)],
       ['minimax_h3', injected.minimax_h3 || new MiniMaxH3Provider(credentials, options.minimax_h3)],
       ['google_omni', injected.google_omni || new GoogleOmniProvider(credentials, options.google_omni)],
@@ -447,6 +493,7 @@ class VideoProviderRegistry {
 
 module.exports = {
   DEFAULT_PROVIDER_ORDER,
+  VIDEO_PROVIDER_IDS,
   VideoProvider,
   VideoProviderRegistry,
   SeedanceProvider,
@@ -454,6 +501,7 @@ module.exports = {
   GoogleOmniProvider,
   KlingProvider,
   WanProvider,
+  MuapiProvider,
   SlideshowProvider,
   safeModelError
 };

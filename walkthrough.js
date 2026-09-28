@@ -115,6 +115,12 @@ const VIDEO_PROVIDER_GUIDE = {
     keyUrl: null,
     covers: 'local FFmpeg assembly using generated stills and narration'
   },
+  muapi: {
+    label: 'MuAPI (Open Generative AI) — one key for Seedance 2.5, Kling 3, Veo 3.1, Wan and image models',
+    keyUrl: 'https://muapi.ai',
+    credentialName: 'MuAPI API key',
+    save(credentials, value) { credentials.muapi = { apiKey: value }; }
+  },
   seedance: {
     label: 'ByteDance Seedance 2.5 — cinematic 30-second multimodal scenes',
     keyUrl: 'https://replicate.com/account/api-tokens',

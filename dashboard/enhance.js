@@ -221,7 +221,7 @@
     if (event.key === '/') { event.preventDefault(); return openPalette(); }
     if (event.key.toLowerCase() === 'n') {
       event.preventDefault();
-      if (!$('#generate-button').disabled) $('#generate-dialog').showModal();
+      if (!$('#generate-button').disabled) $('#generate-button').click();
       return;
     }
     // g-chords: g o → overview, g p → pipeline …

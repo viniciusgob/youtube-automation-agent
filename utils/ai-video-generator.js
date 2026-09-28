@@ -7,6 +7,7 @@ const sharp = require('sharp');
 const { Logger } = require('./logger');
 const { runFFmpeg, checkFFmpeg, ffmpegInstallHint, getMediaDuration } = require('./ffmpeg');
 const { MediaGenerationService } = require('./media-generation-service');
+const { MuapiClient, resolveMuapiAuth } = require('./muapi-client');
 
 class AIVideoGenerator {
   constructor(credentials, options = {}) {
@@ -46,6 +47,14 @@ class AIVideoGenerator {
       }
     }
     
+    // MuAPI (Open Generative AI backend) for Nano Banana / Flux / GPT Image / Seedream stills and thumbnails
+    const muapiClient = new MuapiClient(resolveMuapiAuth(resolvedCredentials));
+    if (muapiClient.isConfigured()) {
+      this.muapi = muapiClient;
+      this.logger.info('MuAPI image service initialized');
+    }
+    this.imageProvider = String(process.env.IMAGE_PROVIDER || 'auto').toLowerCase();
+
     // ElevenLabs configuration
     this.elevenLabsApiKey = resolvedCredentials.elevenLabs?.apiKey || process.env.ELEVENLABS_API_KEY;
     this.elevenLabsVoiceId = resolvedCredentials.elevenLabs?.voiceId || process.env.ELEVENLABS_VOICE_ID;
@@ -195,7 +204,7 @@ class AIVideoGenerator {
     this.logger.info(`Generating ${count} visual assets with style: ${style}`);
 
     try {
-      if (!this.openai && !this.gemini) {
+      if (!this.hasImageProvider()) {
         return await this.simulateVisualAssets(prompt, style, count);
       }
 
@@ -216,18 +225,51 @@ class AIVideoGenerator {
     }
   }
 
+  hasImageProvider() {
+    return Boolean(this.muapi || this.openai || this.gemini);
+  }
+
+  // IMAGE_PROVIDER=auto tries MuAPI, then OpenAI, then Gemini; naming one provider pins it first.
+  imageProviderOrder() {
+    const available = { muapi: this.muapi, openai: this.openai, gemini: this.gemini };
+    const order = ['muapi', 'openai', 'gemini'];
+    if (available[this.imageProvider]) order.unshift(this.imageProvider);
+    return [...new Set(order)].filter(id => available[id]);
+  }
+
   async generateImage(prompt, imagePath) {
     await fs.mkdir(path.dirname(imagePath), { recursive: true });
 
-    if (this.openai) {
-      return await this.generateOpenAIImage(prompt, imagePath);
+    const order = this.imageProviderOrder();
+    if (!order.length) throw new Error('No image generation provider configured');
+    let lastError;
+    for (const provider of order) {
+      try {
+        if (provider === 'muapi') return await this.generateMuapiImage(prompt, imagePath);
+        if (provider === 'openai') return await this.generateOpenAIImage(prompt, imagePath);
+        return await this.generateGeminiImage(prompt, imagePath);
+      } catch (error) {
+        lastError = error;
+        this.logger.warn(`${provider} image generation failed: ${error.message}`);
+      }
     }
+    throw lastError;
+  }
 
-    if (this.gemini) {
-      return await this.generateGeminiImage(prompt, imagePath);
+  async generateMuapiImage(prompt, imagePath) {
+    const downloaded = `${imagePath}.download`;
+    await this.muapi.generateImage(prompt, downloaded, { aspectRatio: '16:9' });
+    try {
+      // Normalise whatever the CDN returned (webp/jpeg) into the extension the pipeline expects.
+      const extension = path.extname(imagePath).toLowerCase();
+      const output = sharp(downloaded, { failOn: 'error' });
+      if (extension === '.jpg' || extension === '.jpeg') await output.jpeg({ quality: 92 }).toFile(imagePath);
+      else if (extension === '.webp') await output.webp({ quality: 92 }).toFile(imagePath);
+      else await output.png().toFile(imagePath);
+    } finally {
+      await fs.unlink(downloaded).catch(() => {});
     }
-
-    throw new Error('No image generation provider configured');
+    return imagePath;
   }
 
   async generateOpenAIImage(prompt, imagePath) {
@@ -910,7 +952,7 @@ class AIVideoGenerator {
     this.logger.info('Generating custom thumbnail...');
 
     try {
-      if (!this.openai && !this.gemini) {
+      if (!this.hasImageProvider()) {
         return await this.simulateThumbnailGeneration(script, style);
       }
 
